@@ -124,7 +124,7 @@ CONVERSION_AGENT_LIVE_BEDROCK=1 CONVERSION_AGENT_BACKEND=bedrock AWS_REGION=us-e
 ```
 
 The Bedrock smoke command also requires a standard AWS credential source such
-as `AWS_PROFILE` or `AWS_ACCESS_KEY_ID`; use the explicit
+as `AWS_PROFILE` or `AWS_ACCESS_KEY_ID`; use the explicit normalized-exact
 `CONVERSION_AGENT_LIVE_BEDROCK=1` opt-in when an instance role supplies those
 credentials. To list these tests without contacting either backend, run
 `python -m pytest --collect-only -m live`.

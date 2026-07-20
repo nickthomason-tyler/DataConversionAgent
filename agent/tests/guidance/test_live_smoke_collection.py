@@ -15,6 +15,7 @@ def test_live_smoke_tests_collect_without_credentials() -> None:
         "ANTHROPIC_API_KEY": "",
         "AWS_ACCESS_KEY_ID": "",
         "AWS_PROFILE": "",
+        "CONVERSION_AGENT_PROJECTS_ROOT": "",
         "CONVERSION_AGENT_LIVE_BEDROCK": "",
     }
     result = subprocess.run(
