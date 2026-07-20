@@ -11,22 +11,21 @@ from __future__ import annotations
 import anthropic
 
 from .. import backend
+from ..guidance.backends import run_with_retries
 from .model import Proposal, Section
 
 BATCH = 40
 MIN_CONFIDENCE = 0.5   # below this we leave the row for a human
 
-SYSTEM = """\
-You map legacy lookup values from a municipality's New World Permitting
-system to the configured values of their new EPL (Energov) system.
+def build_system_prompt(source_system: str | None) -> str:
+    """Build project-aware, source-neutral instructions for the model lane."""
+    source = source_system.strip() if source_system and source_system.strip() else "a legacy system"
+    return f"""You map legacy lookup values from {source} to configured EPL values.
 
 Rules:
 - Choose destination values ONLY from the provided candidate list.
-- Legacy values often carry sort-order prefixes (1-, 1C-, 2R-) and
-  abbreviations (COM=commercial, RES=residential, PP=private provider,
-  BLDG=building, ELEC=electrical...). Expand and reason about the meaning.
-- If no candidate is a faithful semantic match, use no_good_match — never
-  force a mapping. A retired or unconfigured legacy value is a finding.
+- Expand abbreviations and reason about the source meaning without assuming a specific vendor.
+- If no candidate is a faithful semantic match, use no_good_match.
 - Report calibrated confidence: 0.9+ only when the meaning is unambiguous.
 """
 
@@ -61,31 +60,42 @@ def _schema(candidates: list[str]) -> dict:
     }
 
 
-def run(section: Section, client: anthropic.Anthropic | None = None) -> None:
+def run(
+    section: Section,
+    *,
+    client: anthropic.Anthropic | None = None,
+    model_id: str | None = None,
+    source_system: str | None = None,
+    retries: int = 2,
+) -> None:
     """Propose mappings for rows Lane 1 left unmatched (single-dest sections)."""
     if not section.dest_lists or len(section.dst_cols) != 1:
         return  # multi-column sections need the two-stage flow; see cli notes
     client = client or backend.make_client()
+    model_id = model_id or backend.model_id()
     candidates = section.dest_lists[0]
     pending = section.unmatched
     for start in range(0, len(pending), BATCH):
         batch = pending[start:start + BATCH]
         sources = [" | ".join(v for v in r.values if v) for r in batch]
-        response = client.messages.parse(
-            model=backend.model_id(),
-            max_tokens=16000,
-            system=SYSTEM,
-            output_config={"format": {"type": "json_schema", "schema": _schema(candidates)}},
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Section: {section.key}\n"
-                    f"Candidate destination values:\n"
-                    + "\n".join(f"- {c}" for c in candidates)
-                    + "\n\nMap each legacy value (return one entry per value, in order):\n"
-                    + "\n".join(f"- {s}" for s in sources)
-                ),
-            }],
+        response = run_with_retries(
+            lambda: client.messages.parse(
+                model=model_id,
+                max_tokens=16000,
+                system=build_system_prompt(source_system),
+                output_config={"format": {"type": "json_schema", "schema": _schema(candidates)}},
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"Section: {section.key}\n"
+                        f"Candidate destination values:\n"
+                        + "\n".join(f"- {c}" for c in candidates)
+                        + "\n\nMap each legacy value (return one entry per value, in order):\n"
+                        + "\n".join(f"- {s}" for s in sources)
+                    ),
+                }],
+            ),
+            retries=retries,
         )
         result = response.parsed_output
         if result is None:

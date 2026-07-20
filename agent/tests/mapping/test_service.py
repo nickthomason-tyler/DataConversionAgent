@@ -1,0 +1,95 @@
+from pathlib import Path
+from types import SimpleNamespace
+
+from conversion_agent.mapping import service
+from conversion_agent.mapping.llm import build_system_prompt
+from conversion_agent.mapping.model import CrosswalkWorkbook, Section, SourceRow
+
+
+def test_model_prompt_is_source_neutral_without_project() -> None:
+    prompt = build_system_prompt(None)
+    assert "legacy system" in prompt
+    assert "New World" not in prompt
+
+
+def test_model_prompt_uses_project_source_system() -> None:
+    prompt = build_system_prompt("Legacy Alpha")
+    assert "Legacy Alpha" in prompt
+
+
+def test_deterministic_run_does_not_create_a_model_client(monkeypatch, tmp_path) -> None:
+    model = CrosswalkWorkbook(
+        path="input.xlsx",
+        spec={"modules": {}},
+        sections=[
+            Section(
+                tab="Permits",
+                title="Type",
+                src_cols=[1],
+                dst_cols=[2],
+                notes_col=None,
+                header_row=1,
+                rows=[SourceRow(row_idx=2, values=("Source",), existing=("",))],
+                dest_lists=[["Source"]],
+            )
+        ],
+    )
+
+    monkeypatch.setattr(service, "load_validated_workbook", lambda path: model)
+    monkeypatch.setattr(service.writeback, "write", lambda *args, **kwargs: {"auto": 1, "llm": 0})
+
+    class FailingBackendFactory:
+        def create(self) -> object:
+            raise AssertionError("deterministic run must not create a model client")
+
+    report = service.MappingService(backend_factory=FailingBackendFactory()).run(
+        service.MappingRequest(input_path=Path("input.xlsx"), output_path=tmp_path / "output.xlsx")
+    )
+
+    assert report.deterministic == 1
+    assert report.model_proposed == 0
+
+
+def test_model_run_receives_the_selected_project_source_system(monkeypatch, tmp_path) -> None:
+    model = CrosswalkWorkbook(
+        path="input.xlsx",
+        spec={"modules": {}},
+        sections=[
+            Section(
+                tab="Permits",
+                title="Type",
+                src_cols=[1],
+                dst_cols=[2],
+                notes_col=None,
+                header_row=1,
+                rows=[SourceRow(row_idx=2, values=("Unknown",), existing=("",))],
+                dest_lists=[["Allowed"]],
+            )
+        ],
+    )
+    client = object()
+    seen: list[dict[str, object]] = []
+    backend_factory = SimpleNamespace(
+        create=lambda: client,
+        model_id="test-model",
+        settings=SimpleNamespace(backend_retries=2),
+    )
+    repository = SimpleNamespace(
+        load=lambda _: SimpleNamespace(metadata=SimpleNamespace(source_system="Legacy Alpha"))
+    )
+    monkeypatch.setattr(service, "load_validated_workbook", lambda path: model)
+    monkeypatch.setattr(service.writeback, "write", lambda *args, **kwargs: {"auto": 0, "llm": 0})
+    monkeypatch.setattr(service.llm, "run", lambda section, **kwargs: seen.append(kwargs))
+
+    service.MappingService(repository=repository, backend_factory=backend_factory).run(
+        service.MappingRequest(
+            input_path=Path("input.xlsx"),
+            output_path=tmp_path / "output.xlsx",
+            use_llm=True,
+            project_id="alpha",
+        )
+    )
+
+    assert seen == [
+        {"client": client, "model_id": "test-model", "source_system": "Legacy Alpha", "retries": 2}
+    ]
