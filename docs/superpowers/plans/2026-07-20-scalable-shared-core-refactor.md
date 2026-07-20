@@ -111,7 +111,7 @@ def test_example_project_and_matcher_baseline() -> None:
         "blocked-on-config": 3,
         "draft": 2,
     }
-    assert Matcher().norm("1C-ELEC", 3) == "commercial electrical"
+    assert Matcher({"1c": "commercial"}).norm("1C-ELEC", 3) == "commercial electrical"
 ```
 
 - [ ] **Step 2: Run the characterization test before changing behavior**
