@@ -45,7 +45,8 @@ def build_report(model, written: object | None = None) -> MappingReport:
         for section in model.sections
     )
     remaining = sum(len(section.unmatched) for section in model.sections)
-    return MappingReport(rows, premapped, deterministic, model_proposed, remaining)
+    warnings = tuple(getattr(written, "warnings", ()))
+    return MappingReport(rows, premapped, deterministic, model_proposed, remaining, warnings)
 
 
 class MappingService:

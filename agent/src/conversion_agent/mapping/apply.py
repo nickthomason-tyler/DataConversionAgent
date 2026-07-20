@@ -123,7 +123,7 @@ def main() -> None:
                         (rejection.source, rejection.reason) for rejection in report.rejected
                     ],
                 },
-                "written": written,
+                "written": written.as_dict(),
             },
             indent=2,
         )

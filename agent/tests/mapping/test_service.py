@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from conversion_agent.mapping import service
 from conversion_agent.mapping import llm
 from conversion_agent.mapping.llm import build_system_prompt
-from conversion_agent.mapping.model import CrosswalkWorkbook, Section, SourceRow
+from conversion_agent.mapping.model import CrosswalkWorkbook, Section, SourceRow, WriteReport
 
 
 def test_model_prompt_is_source_neutral_without_project() -> None:
@@ -150,3 +150,20 @@ def test_model_run_constructs_the_legacy_backend_client_when_omitted(monkeypatch
     llm.run(section)
 
     assert section.proposals == {}
+
+
+def test_build_report_surfaces_write_warnings() -> None:
+    model = CrosswalkWorkbook(path="input.xlsx", spec={"modules": {}}, sections=[])
+
+    report = service.build_report(
+        model,
+        WriteReport(
+            deterministic_rows=0,
+            model_rows=0,
+            destination_cells=0,
+            note_cells=0,
+            warnings=("Style cloning disabled: ValueError: bad styles",),
+        ),
+    )
+
+    assert report.warnings == ("Style cloning disabled: ValueError: bad styles",)

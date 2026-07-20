@@ -11,6 +11,7 @@ workbook produced by the same tool.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterator
 
 
 @dataclass
@@ -62,3 +63,34 @@ class CrosswalkWorkbook:
             if s.tab == tab and s.title == title:
                 return s
         return None
+
+
+@dataclass(frozen=True)
+class WriteReport:
+    """Verified write-back totals, with legacy row-count accessors."""
+
+    deterministic_rows: int
+    model_rows: int
+    destination_cells: int
+    note_cells: int
+    warnings: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, int]:
+        """Return the legacy report shape used by direct callers."""
+        return {"auto": self.deterministic_rows, "llm": self.model_rows}
+
+    def __getitem__(self, key: str) -> int:
+        return self.as_dict()[key]
+
+    def get(self, key: str, default: int | None = None) -> int | None:
+        return self.as_dict().get(key, default)
+
+    def keys(self) -> Iterator[str]:
+        return iter(("auto", "llm"))
+
+
+@dataclass(frozen=True)
+class CellEdit:
+    sheet_path: str
+    cell_ref: str
+    value: str
