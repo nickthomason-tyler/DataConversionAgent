@@ -136,7 +136,9 @@ def _set_cell(sheet_root, row_idx: int, col_idx: int, text: str,
             pass  # keep the value; lose only the color
 
 
-def write(model: CrosswalkWorkbook, out_path: str) -> dict:
+def write(model: CrosswalkWorkbook, out_path: str, overwrite: bool = False) -> dict:
+    # overwrite=True deliberately replaces previously written proposal values
+    # and notes (revision runs); human review still happens on the output.
     written = {"auto": 0, "llm": 0}
     edits_by_sheet: dict[str, list[tuple[int, int, str, str]]] = {}
     for sec in model.sections:
@@ -144,12 +146,13 @@ def write(model: CrosswalkWorkbook, out_path: str) -> dict:
             kind = "llm" if prop.method == "llm" else "auto"
             row = next(r for r in sec.rows if r.row_idx == row_idx)
             for col, value, existing in zip(sec.dst_cols, prop.dest, row.existing):
-                if not value or existing.strip():
-                    continue  # never overwrite; skip empty (no-good-match) dests
+                if not value or (existing.strip() and not overwrite):
+                    continue  # skip empty dests; overwrite only on revision runs
                 edits_by_sheet.setdefault(sec.tab, []).append((row_idx, col, value, kind))
             if sec.notes_col and prop.note:
                 edits_by_sheet.setdefault(sec.tab, []).append(
                     (row_idx, sec.notes_col, prop.note, kind))
+            # (notes for overwritten rows are replaced below via overwrite flag)
             written[kind] += 1
 
     src_zip = zipfile.ZipFile(model.path)
