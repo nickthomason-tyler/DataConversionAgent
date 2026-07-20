@@ -6,7 +6,7 @@ Usage:
 
 Reads the datatype/values spreadsheet (authoritative table+column schema) and
 the DCT-DB Word documentation (module groupings and table descriptions), and
-writes dictionary.yaml next to this script. Re-run per DCT release.
+writes the packaged dictionary resource. Re-run per DCT release.
 """
 
 from __future__ import annotations
@@ -131,7 +131,10 @@ def main() -> None:
         "column_count": sum(len(t["columns"]) for t in tables.values()),
         "tables": tables,
     }
-    dest = Path(__file__).resolve().parent / "dictionary.yaml"
+    dest = (
+        Path(__file__).resolve().parents[1]
+        / "src/conversion_agent/resources/data/dct/dictionary.yaml"
+    )
     dest.write_text(yaml.safe_dump(out, sort_keys=True, width=100))
     print(f"wrote {dest}: {out['table_count']} tables, {out['column_count']} columns")
 

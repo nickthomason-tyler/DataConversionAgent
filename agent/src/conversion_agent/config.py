@@ -4,16 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
 from .core.settings import AppSettings
 from .projects.filesystem import FilesystemProjectRepository
 from .projects.models import ProjectContext
+from .resources.catalog import ResourceCatalog
 
 AGENT_ROOT = Path(__file__).resolve().parents[2]
 CLIENTS_DIR = AGENT_ROOT / "clients"
-KNOWLEDGE_DIR = AGENT_ROOT / "knowledge"
-DICTIONARY_PATH = AGENT_ROOT / "dct" / "dictionary.yaml"
 
 def load_project(
     client_name: str, projects_root: Path | str | None = None
@@ -33,5 +30,6 @@ def load_project(
     return FilesystemProjectRepository(settings.projects_root).load(client_name)
 
 
-def load_dictionary() -> dict:
-    return yaml.safe_load(DICTIONARY_PATH.read_text())
+def load_dictionary():
+    """Load the immutable packaged dictionary through the legacy API."""
+    return ResourceCatalog().dictionary()
