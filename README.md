@@ -28,4 +28,4 @@ python -m conversion_agent.cli example-client
 
 1. Read the [process overview](./docs/data-conversion-process/README.md).
 2. Follow the [launch playbook](./docs/data-conversion-process/04-launch-playbook.md) — the first-week checklist is at the bottom.
-3. Replace `agent/dct/dictionary.yaml` with the real DCT data dictionary — the single highest-leverage task in the repo.
+3. `agent/dct/dictionary.yaml` is generated from the real DCT-DB release (V2025.2.01: 309 tables, 2,108 columns). On each new DCT release, regenerate it with `agent/dct/build_dictionary.py` from the release's datatype spreadsheet and Word documentation.

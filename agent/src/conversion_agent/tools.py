@@ -46,28 +46,40 @@ def search_knowledge_base(query: str) -> str:
 
 
 @beta_tool
-def lookup_dct_field(table: str, column: str = "") -> str:
-    """Look up a table (and optionally one column) in the Data Conversion
-    Template data dictionary: description, valid values, required/optional,
-    and which EPL configuration it depends on. Call this whenever a question
-    involves what the DCT expects in a field.
+def lookup_dct_field(table: str = "", column: str = "", module: str = "") -> str:
+    """Look up the Data Conversion Template (DCT) data dictionary. Call this
+    whenever a question involves what the DCT expects: a table's columns and
+    types, whether a column is nullable, its max length, or which tables a
+    module contains.
 
     Args:
-        table: DCT table name, e.g. "PERMIT_CASE".
-        column: Optional column name to narrow the lookup.
+        table: DCT table name, e.g. "permit" or "business_license". Case-insensitive.
+        column: Optional column name to narrow the lookup to one column.
+        module: Alternative to table — list a module's tables, e.g. "permits",
+            "code_enforcement", "business_license", "contacts", "finance".
     """
     dictionary = load_dictionary()
     tables = dictionary.get("tables", {})
-    entry = tables.get(table.upper())
+    if module and not table:
+        hits = {n: e.get("description", "") for n, e in tables.items()
+                if e.get("module") == module.strip().lower()}
+        if not hits:
+            mods = sorted({e.get("module", "") for e in tables.values()})
+            return f"No module '{module}'. Modules: {mods}"
+        return json.dumps({"module": module, "tables": hits}, indent=2)
+    key = table.strip().lower()
+    entry = tables.get(key)
     if entry is None:
-        return f"Table '{table}' not in dictionary. Known tables: {sorted(tables)}"
+        near = [n for n in tables if key and key in n]
+        return f"Table '{table}' not in dictionary (DCT {dictionary.get('version')}). Close matches: {near[:15]}"
     if not column:
-        cols = {name: c.get("description", "") for name, c in entry.get("columns", {}).items()}
-        return json.dumps({"table": table.upper(), "description": entry.get("description"), "columns": cols}, indent=2)
-    col = entry.get("columns", {}).get(column.upper())
+        return json.dumps({"table": key, "module": entry.get("module"),
+                           "description": entry.get("description", ""),
+                           "columns": entry.get("columns", {})}, indent=2)
+    col = entry.get("columns", {}).get(column.strip().lower())
     if col is None:
-        return f"Column '{column}' not in {table}. Columns: {sorted(entry.get('columns', {}))}"
-    return json.dumps({"table": table.upper(), "column": column.upper(), **col}, indent=2)
+        return f"Column '{column}' not in {key}. Columns: {sorted(entry.get('columns', {}))}"
+    return json.dumps({"table": key, "column": column.strip().lower(), **col}, indent=2)
 
 
 @beta_tool

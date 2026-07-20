@@ -3,10 +3,10 @@
 # (graded by the conversion SME weekly).
 questions:
   - id: q001
-    question: What are the valid statuses for PERMIT_CASE.STATUS and what do they depend on?
+    question: What columns does the DCT permit table expect, and which are non-nullable?
     must_contain:
-      - configured workflow statuses (config dependency, not fixed values)
-      - crosswalk:permit_status
+      - permit_number, permit_type, permit_sub_type, permit_status among columns
+      - correct nullability from the dictionary
       - citation of the DCT dictionary
   - id: q002
     question: How should we handle 1900-01-01 dates coming out of the client's SQL Server system?
