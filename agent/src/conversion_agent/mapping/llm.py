@@ -62,8 +62,8 @@ def _schema(candidates: list[str]) -> dict:
 
 def run(
     section: Section,
-    *,
     client: anthropic.Anthropic | None = None,
+    *,
     model_id: str | None = None,
     source_system: str | None = None,
     retries: int = 2,

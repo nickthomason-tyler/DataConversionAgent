@@ -6,16 +6,60 @@ import json
 
 import openpyxl
 
+from conversion_agent.core.errors import WorkbookError
+
 from .model import CrosswalkWorkbook, Section, SourceRow
 
 
 def _parse_lookup_spec(wb) -> dict:
-    ws = wb["LookupSpec"]
+    try:
+        ws = wb["LookupSpec"]
+    except KeyError as exc:
+        raise WorkbookError("Workbook has no LookupSpec worksheet") from exc
     rows = list(ws.iter_rows(values_only=True))
     for r in rows:
         if r and r[0] == "spec":
-            return json.loads("".join(c for c in r[4:] if isinstance(c, str)))
+            try:
+                spec = json.loads("".join(c for c in r[4:] if isinstance(c, str)))
+            except json.JSONDecodeError as exc:
+                raise WorkbookError(f"Invalid LookupSpec JSON: {exc}") from exc
+            if not isinstance(spec, dict):
+                raise WorkbookError("LookupSpec JSON must be an object")
+            return spec
     return {}
+
+
+def _spec_counts(spec: dict) -> dict[str, dict[str, tuple[int, int]]]:
+    """Validate the generator contract shape while deriving visible column counts."""
+    modules = spec.get("modules", {})
+    if not isinstance(modules, dict):
+        raise WorkbookError("LookupSpec modules must be an object")
+
+    counts_by_tab: dict[str, dict[str, tuple[int, int]]] = {}
+    for module, module_spec in modules.items():
+        if not isinstance(module, str) or not isinstance(module_spec, dict):
+            raise WorkbookError("LookupSpec module entries must be objects")
+        type_queries = module_spec.get("typeQueries", {})
+        if not isinstance(type_queries, dict):
+            raise WorkbookError(f"LookupSpec module {module} has invalid typeQueries")
+        for section, section_spec in type_queries.items():
+            if not isinstance(section, str) or not isinstance(section_spec, dict):
+                raise WorkbookError(f"LookupSpec module {module} has an invalid section")
+            source = section_spec.get("source")
+            destination = section_spec.get("destination")
+            if not isinstance(source, dict) or not isinstance(destination, dict):
+                raise WorkbookError(f"LookupSpec section {section} has invalid endpoints")
+            source_columns = source.get("columns")
+            destination_columns = destination.get("columns")
+            if not isinstance(source_columns, list) or not isinstance(
+                destination_columns, list
+            ):
+                raise WorkbookError(f"LookupSpec section {section} has invalid columns")
+            counts_by_tab.setdefault(module, {})[section] = (
+                len(source_columns),
+                len(destination_columns),
+            )
+    return counts_by_tab
 
 
 def _parse_visible_tab(ws, tab: str, spec_counts: dict[str, tuple[int, int]]) -> list[Section]:
@@ -54,12 +98,20 @@ def _parse_visible_tab(ws, tab: str, spec_counts: dict[str, tuple[int, int]]) ->
             data_end = j - 1 if j < len(rows) else j
             for k in range(i + 2, data_end):
                 dr = rows[k] or ()
-                src = tuple(str(dr[c - 1]).strip() if c - 1 < len(dr) and dr[c - 1] is not None else ""
-                            for c in src_cols)
+                src = tuple(
+                    str(dr[c - 1]).strip()
+                    if c - 1 < len(dr) and dr[c - 1] is not None
+                    else ""
+                    for c in src_cols
+                )
                 if not any(src):
                     continue
-                dst = tuple(str(dr[c - 1]).strip() if c - 1 < len(dr) and dr[c - 1] is not None else ""
-                            for c in dst_cols)
+                dst = tuple(
+                    str(dr[c - 1]).strip()
+                    if c - 1 < len(dr) and dr[c - 1] is not None
+                    else ""
+                    for c in dst_cols
+                )
                 sec.rows.append(SourceRow(row_idx=k + 1, values=src, existing=dst))
             if sec.rows:
                 sections.append(sec)
@@ -73,9 +125,11 @@ def _parse_hidden_tab(ws) -> dict[str, tuple[list[list[str]], dict[str, list[str
     """Return {section title: (dest value lists, cascade map)}."""
     out: dict[str, tuple[list[list[str]], dict[str, list[str]]]] = {}
     current: str | None = None
-    for r in ws.iter_rows(values_only=True):
+    for row_number, r in enumerate(ws.iter_rows(values_only=True), start=1):
         if not r or r[0] is None:
             continue
+        if len(r) < 3:
+            raise WorkbookError(f"Malformed hidden sheet row {row_number}")
         first = str(r[0])
         if isinstance(r[1], (int, float)) and isinstance(r[2], (int, float)):
             current = first.strip()
@@ -92,11 +146,7 @@ def _parse_hidden_tab(ws) -> dict[str, tuple[list[list[str]], dict[str, list[str
 def load(path: str) -> CrosswalkWorkbook:
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     model = CrosswalkWorkbook(path=path, spec=_parse_lookup_spec(wb))
-    counts_by_tab: dict[str, dict[str, tuple[int, int]]] = {}
-    for module, m in model.spec.get("modules", {}).items():
-        for section, s in m.get("typeQueries", {}).items():
-            counts_by_tab.setdefault(module, {})[section] = (
-                len(s["source"]["columns"]), len(s["destination"]["columns"]))
+    counts_by_tab = _spec_counts(model.spec)
     hidden: dict[str, dict] = {}
     for name in wb.sheetnames:
         if name.endswith("Hidden"):

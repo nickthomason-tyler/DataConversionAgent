@@ -76,9 +76,19 @@ def load_validated_workbook(path: str | Path):
         if len(section.dest_lists) < len(section.dst_cols):
             raise WorkbookError(f"Section {section.key} is missing destination pick lists")
         if len(section.dst_cols) == 2 and section.cascade:
-            invalid = set(section.cascade) - set(section.dest_lists[0])
-            if invalid:
+            invalid_parents = set(section.cascade) - set(section.dest_lists[0])
+            if invalid_parents:
                 raise WorkbookError(
-                    f"Section {section.key} has invalid cascade keys: {sorted(invalid)}"
+                    f"Section {section.key} has invalid cascade keys: {sorted(invalid_parents)}"
+                )
+            valid_children = set(section.dest_lists[1])
+            invalid_children = {
+                parent: sorted(set(children) - valid_children)
+                for parent, children in section.cascade.items()
+                if set(children) - valid_children
+            }
+            if invalid_children:
+                raise WorkbookError(
+                    f"Section {section.key} has invalid cascade child values: {invalid_children}"
                 )
     return model

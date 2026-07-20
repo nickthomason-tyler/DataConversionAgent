@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from conversion_agent.mapping import service
+from conversion_agent.mapping import llm
 from conversion_agent.mapping.llm import build_system_prompt
 from conversion_agent.mapping.model import CrosswalkWorkbook, Section, SourceRow
 
@@ -93,3 +94,59 @@ def test_model_run_receives_the_selected_project_source_system(monkeypatch, tmp_
     assert seen == [
         {"client": client, "model_id": "test-model", "source_system": "Legacy Alpha", "retries": 2}
     ]
+
+
+def test_model_run_accepts_the_legacy_positional_client() -> None:
+    section = Section(
+        tab="Permits",
+        title="Type",
+        src_cols=[1],
+        dst_cols=[2],
+        notes_col=None,
+        header_row=1,
+        rows=[SourceRow(row_idx=2, values=("Source",), existing=("",))],
+        dest_lists=[["Allowed"]],
+    )
+
+    class Messages:
+        def parse(self, **kwargs):
+            return SimpleNamespace(
+                parsed_output={
+                    "mappings": [
+                        {
+                            "source": "Source",
+                            "match": "Allowed",
+                            "confidence": 0.9,
+                            "rationale": "exact test match",
+                        }
+                    ]
+                }
+            )
+
+    client = SimpleNamespace(messages=Messages())
+
+    llm.run(section, client)
+
+    assert section.proposals[2].dest == ("Allowed",)
+
+
+def test_model_run_constructs_the_legacy_backend_client_when_omitted(monkeypatch) -> None:
+    section = Section(
+        tab="Permits",
+        title="Type",
+        src_cols=[1],
+        dst_cols=[2],
+        notes_col=None,
+        header_row=1,
+        rows=[SourceRow(row_idx=2, values=("Source",), existing=("",))],
+        dest_lists=[["Allowed"]],
+    )
+    client = SimpleNamespace(
+        messages=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(parsed_output=None))
+    )
+    monkeypatch.setattr(llm.backend, "make_client", lambda: client)
+    monkeypatch.setattr(llm.backend, "model_id", lambda: "legacy-model")
+
+    llm.run(section)
+
+    assert section.proposals == {}

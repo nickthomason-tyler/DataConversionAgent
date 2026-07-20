@@ -29,7 +29,7 @@ class ProposalApplicationReport:
     rejected: tuple[ProposalRejection, ...]
 
 
-def apply(model, proposals: ProposalDocument) -> ProposalApplicationReport:
+def apply_typed(model, proposals: ProposalDocument) -> ProposalApplicationReport:
     """Validate proposals against workbook rows without overwriting mappings."""
     accepted: list[ProposalInput] = []
     no_match: list[ProposalInput] = []
@@ -89,9 +89,19 @@ def apply(model, proposals: ProposalDocument) -> ProposalApplicationReport:
     return ProposalApplicationReport(tuple(accepted), tuple(no_match), tuple(rejected))
 
 
+def apply(model, proposals: list[dict]) -> dict:
+    """Legacy list-of-dicts entry point retained for direct Python callers."""
+    report = apply_typed(model, validate_proposal_document({"proposals": proposals}))
+    return {
+        "accepted": len(report.accepted),
+        "no_good_match": len(report.no_match),
+        "rejected": [(list(rejection.source), rejection.reason) for rejection in report.rejected],
+    }
+
+
 def validate_proposals(model, payload: object) -> ProposalApplicationReport:
     """Parse and validate an external payload against a workbook model."""
-    return apply(model, validate_proposal_document(payload))
+    return apply_typed(model, validate_proposal_document(payload))
 
 
 def main() -> None:

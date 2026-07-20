@@ -1,4 +1,4 @@
-from conversion_agent.mapping.apply import apply, validate_proposals
+from conversion_agent.mapping.apply import apply, apply_typed, validate_proposals
 from conversion_agent.mapping.model import CrosswalkWorkbook, Section, SourceRow
 from conversion_agent.mapping.validation import validate_proposal_document
 
@@ -27,7 +27,7 @@ def test_reports_unknown_section_and_source_row() -> None:
         }
     )
 
-    report = apply(_model(), proposals)
+    report = apply_typed(_model(), proposals)
 
     assert report.accepted == ()
     assert [(rejection.source, rejection.reason) for rejection in report.rejected] == [
@@ -46,8 +46,8 @@ def test_accepts_valid_proposal_and_rejects_already_mapped_source() -> None:
         }
     )
 
-    accepted = apply(model, proposal)
-    rejected = apply(model, proposal)
+    accepted = apply_typed(model, proposal)
+    rejected = apply_typed(model, proposal)
 
     assert accepted.accepted == proposal.proposals
     assert rejected.rejected[0].reason == "already mapped"
@@ -64,3 +64,19 @@ def test_validate_proposals_parses_the_external_payload_before_applying_it() -> 
     )
 
     assert len(report.accepted) == 1
+
+
+def test_legacy_apply_accepts_a_list_of_dicts_and_returns_legacy_report_shape() -> None:
+    result = apply(
+        _model(),
+        [
+            {"tab": "Permits", "section": "Type", "source": ["Known"], "dest": ["Allowed"]},
+            {"tab": "Permits", "section": "Type", "source": ["Unknown"], "dest": ["Allowed"]},
+        ],
+    )
+
+    assert result == {
+        "accepted": 1,
+        "no_good_match": 0,
+        "rejected": [(["Unknown"], "unknown source row")],
+    }
