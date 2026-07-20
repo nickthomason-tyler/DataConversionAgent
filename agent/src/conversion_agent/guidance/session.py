@@ -62,17 +62,26 @@ class GuidanceSession:
             del self.history[:2]
 
     def ask(self, question: str) -> str:
+        prior_history = list(self.history)
         self.history.append({"role": "user", "content": question})
         self._trim_history()
-        runner = self.client.beta.messages.tool_runner(
-            model=self.model_id,
-            max_tokens=MAX_TOKENS,
-            thinking={"type": "adaptive"},
-            system=self.system,
-            tools=self.tools.anthropic_tools,
-            messages=self.history,
-        )
-        final = run_with_retries(runner.until_done, retries=self.settings.backend_retries)
+
+        def run_turn():
+            runner = self.client.beta.messages.tool_runner(
+                model=self.model_id,
+                max_tokens=MAX_TOKENS,
+                thinking={"type": "adaptive"},
+                system=self.system,
+                tools=self.tools.anthropic_tools,
+                messages=self.history,
+            )
+            return runner.until_done()
+
+        try:
+            final = run_with_retries(run_turn, retries=self.settings.backend_retries)
+        except Exception:
+            self.history = prior_history
+            raise
         answer = "".join(block.text for block in final.content if block.type == "text")
         self.history.append({"role": "assistant", "content": answer})
         self._trim_history()
