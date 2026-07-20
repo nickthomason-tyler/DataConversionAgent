@@ -14,7 +14,13 @@ from conversion_agent.mapping import writeback
 from conversion_agent.mapping.model import CrosswalkWorkbook, Proposal, Section, SourceRow
 
 
-def _crosswalk(tmp_path: Path) -> tuple[Path, CrosswalkWorkbook]:
+def _crosswalk(
+    tmp_path: Path,
+    *,
+    existing_note: str = "",
+    proposal_dest: tuple[str, ...] = ("Approved ",),
+    proposal_note: str = "verified ",
+) -> tuple[Path, CrosswalkWorkbook]:
     path = tmp_path / "crosswalk.xlsx"
     book = openpyxl.Workbook()
     sheet = book.active
@@ -22,7 +28,7 @@ def _crosswalk(tmp_path: Path) -> tuple[Path, CrosswalkWorkbook]:
     sheet["A1"] = "Type"
     sheet["A3"] = "Legacy type"
     sheet["B3"] = None
-    sheet["C3"] = None
+    sheet["C3"] = existing_note or None
     hidden = book.create_sheet("Permits Hidden")
     hidden.sheet_state = "hidden"
     hidden["A1"] = "keep hidden"
@@ -61,11 +67,29 @@ def _crosswalk(tmp_path: Path) -> tuple[Path, CrosswalkWorkbook]:
         rows=[SourceRow(row_idx=3, values=("Legacy type",), existing=("",))],
         proposals={
             3: Proposal(
-                dest=("Approved ",), method="exact", confidence=1.0, note="verified "
+                dest=proposal_dest, method="exact", confidence=1.0, note=proposal_note
             )
         },
     )
     return path, CrosswalkWorkbook(path=str(path), spec={"modules": {}}, sections=[section])
+
+
+def _rewrite_package(path: Path, mutate) -> None:
+    staged = path.with_suffix(".staged.xlsx")
+    with zipfile.ZipFile(path) as source, zipfile.ZipFile(staged, "w") as target:
+        for item in source.infolist():
+            replacement = mutate(item.filename, source.read(item.filename))
+            if replacement is not None:
+                target.writestr(item, replacement)
+    shutil.move(staged, path)
+
+
+def _cell_text(path: Path, ref: str) -> str:
+    with zipfile.ZipFile(path) as package:
+        root = etree.fromstring(package.read("xl/worksheets/sheet1.xml"))
+    return root.xpath(
+        f"string(.//m:c[@r='{ref}']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN}
+    )
 
 
 def test_write_refuses_input_as_output(tmp_path: Path) -> None:
@@ -90,6 +114,51 @@ def test_failed_verification_keeps_existing_output(monkeypatch, tmp_path: Path) 
 
     assert output.read_bytes() == b"existing"
     assert not list(tmp_path.glob(".out.xlsx.*.tmp"))
+
+
+def test_write_preserves_human_no_good_match_note_without_overwrite(tmp_path: Path) -> None:
+    _, model = _crosswalk(
+        tmp_path,
+        existing_note="human review",
+        proposal_dest=("",),
+        proposal_note="NO GOOD MATCH: needs review",
+    )
+    output = tmp_path / "out.xlsx"
+
+    report = writeback.write(model, str(output))
+
+    assert _cell_text(output, "C3") == "human review"
+    assert report.as_dict() == {"auto": 0, "llm": 0}
+    assert report.note_cells == 0
+
+
+def test_write_replaces_human_no_good_match_note_with_overwrite(tmp_path: Path) -> None:
+    _, model = _crosswalk(
+        tmp_path,
+        existing_note="human review",
+        proposal_dest=("",),
+        proposal_note="NO GOOD MATCH: needs review",
+    )
+    output = tmp_path / "out.xlsx"
+
+    report = writeback.write(model, str(output), overwrite=True)
+
+    assert _cell_text(output, "C3") == "NO GOOD MATCH: needs review"
+    assert report.as_dict() == {"auto": 1, "llm": 0}
+    assert report.note_cells == 1
+
+
+def test_write_refuses_hard_link_alias_of_input(tmp_path: Path) -> None:
+    source, model = _crosswalk(tmp_path)
+    alias = tmp_path / "input-alias.xlsx"
+    alias.hardlink_to(source)
+    before = source.read_bytes()
+
+    with pytest.raises(OutputError, match="input workbook"):
+        writeback.write(model, str(alias))
+
+    assert source.read_bytes() == before
+    assert alias.read_bytes() == before
 
 
 def test_write_preserves_protected_parts_extensions_and_trailing_spaces(tmp_path: Path) -> None:
@@ -173,3 +242,96 @@ def test_style_cloner_construction_failure_is_reported(monkeypatch, tmp_path: Pa
     report = writeback.write(model, str(output))
 
     assert report.warnings == ("Style cloning disabled: ValueError: styles unavailable",)
+
+
+def test_verify_rejects_changed_package_members(tmp_path: Path) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    writeback.write(model, str(output))
+    with zipfile.ZipFile(output, "a") as package:
+        package.writestr("unexpected.txt", b"not in source")
+
+    with pytest.raises(OutputError, match="package members"):
+        writeback.verify_output(
+            source,
+            output,
+            (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),),
+            styles_changed=True,
+        )
+
+
+def test_verify_rejects_corrupted_hidden_sheet_and_lookup_spec(tmp_path: Path) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    writeback.write(model, str(output))
+    _rewrite_package(
+        output,
+        lambda name, content: content + b"corrupt" if name == "xl/worksheets/sheet2.xml" else content,
+    )
+
+    with pytest.raises(OutputError, match="Untouched workbook part"):
+        writeback.verify_output(
+            source,
+            output,
+            (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),),
+            styles_changed=True,
+        )
+
+    writeback.write(model, str(output), overwrite=True)
+    _rewrite_package(
+        output,
+        lambda name, content: content + b"corrupt" if name == "xl/worksheets/sheet3.xml" else content,
+    )
+
+    with pytest.raises(OutputError, match="Untouched workbook part"):
+        writeback.verify_output(
+            source,
+            output,
+            (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),),
+            styles_changed=True,
+        )
+
+
+def test_verify_rejects_missing_hidden_sheet_and_lookup_spec(tmp_path: Path) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    expected = (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),)
+    writeback.write(model, str(output))
+    _rewrite_package(output, lambda name, content: None if name == "xl/worksheets/sheet2.xml" else content)
+
+    with pytest.raises(OutputError, match="package members"):
+        writeback.verify_output(source, output, expected, styles_changed=True)
+
+    writeback.write(model, str(output), overwrite=True)
+    _rewrite_package(output, lambda name, content: None if name == "xl/worksheets/sheet3.xml" else content)
+
+    with pytest.raises(OutputError, match="package members"):
+        writeback.verify_output(source, output, expected, styles_changed=True)
+
+
+def test_verify_requires_inline_string_cells_with_preserved_space(tmp_path: Path) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    writeback.write(model, str(output))
+
+    def replace_cell(name: str, content: bytes) -> bytes:
+        if name != "xl/worksheets/sheet1.xml":
+            return content
+        root = etree.fromstring(content)
+        cell = root.xpath(".//m:c[@r='B3']", namespaces={"m": writeback.NS_MAIN})[0]
+        cell.attrib.pop("t")
+        for child in list(cell):
+            cell.remove(child)
+        value = etree.SubElement(cell, f"{{{writeback.NS_MAIN}}}v")
+        value.text = "Approved "
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
+
+    _rewrite_package(output, replace_cell)
+
+    with pytest.raises(OutputError, match="inline string"):
+        writeback.verify_output(
+            source,
+            output,
+            (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),),
+            styles_changed=True,
+        )
