@@ -46,6 +46,38 @@ export ANTHROPIC_API_KEY=...   # or `ant auth login`
 python -m conversion_agent.cli example-client
 ```
 
+## Running on Amazon Bedrock (corporate account)
+
+The backend switch is built in (`src/conversion_agent/backend.py`). On a
+machine using Claude through Bedrock:
+
+```bash
+git clone https://github.com/nickathomason/DataConversionAgent.git
+cd DataConversionAgent/agent
+pip install -e . "anthropic[bedrock]" lxml
+
+export CONVERSION_AGENT_BACKEND=bedrock
+export AWS_REGION=us-east-1            # your Bedrock region
+# plus standard AWS credentials: AWS_PROFILE, or AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN, or an instance role
+
+python -m conversion_agent.cli example-client
+```
+
+With `CONVERSION_AGENT_BACKEND=bedrock`, the guidance agent and the Lane 2
+mapper use the `AnthropicBedrockMantle` client and Bedrock model IDs
+(`anthropic.claude-opus-4-8`) automatically — no code changes. The mapping
+engine's deterministic lanes (`conversion_agent.mapping.cli`, `apply`) make
+no model calls at all and run identically anywhere.
+
+Notes for the Bedrock environment:
+- Verify the account has the target Claude model enabled in the chosen region.
+- Structured outputs and tool use (everything Lane 2 uses) are supported on
+  Bedrock; the tool-runner loop in `agent.py` should be smoke-tested once
+  against the installed SDK version.
+- Client workbooks and per-client pipeline scripts are intentionally NOT in
+  this repository — transfer them separately through an approved channel.
+
 ## How it works
 
 1. `config.py` loads the client's project file, mapping workbook, and profiling
