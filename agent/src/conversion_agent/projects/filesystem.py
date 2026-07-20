@@ -135,7 +135,9 @@ class FilesystemProjectRepository:
         try:
             resolved = knowledge_dir.resolve(strict=True)
         except OSError as exc:
-            raise ProjectValidationError(f"Invalid knowledge directory {knowledge_dir}: {exc}") from exc
+            raise ProjectValidationError(
+                f"Invalid knowledge directory {knowledge_dir}: {exc}"
+            ) from exc
         try:
             resolved.relative_to(project_dir)
         except ValueError as exc:

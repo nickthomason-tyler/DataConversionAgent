@@ -90,9 +90,7 @@ def _walk_traversable(root, prefix: str = ""):
             yield item, relative
 
 
-def _chunks(
-    source: str, text: str, scope: str, project_id: str | None = None
-) -> list[Chunk]:
+def _chunks(source: str, text: str, scope: str, project_id: str | None = None) -> list[Chunk]:
     chunks: list[Chunk] = []
     heading = Path(source).stem
     lines: list[str] = []

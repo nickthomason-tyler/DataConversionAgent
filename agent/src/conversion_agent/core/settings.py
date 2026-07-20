@@ -51,9 +51,7 @@ class AppSettings:
             raise SettingsError("Set --projects-root or CONVERSION_AGENT_PROJECTS_ROOT.")
         try:
             numeric = {
-                "max_history_messages": int(
-                    env.get("CONVERSION_AGENT_MAX_HISTORY_MESSAGES", "40")
-                ),
+                "max_history_messages": int(env.get("CONVERSION_AGENT_MAX_HISTORY_MESSAGES", "40")),
                 "max_tool_chars": int(env.get("CONVERSION_AGENT_MAX_TOOL_CHARS", "50000")),
                 "mapping_default_limit": int(
                     env.get("CONVERSION_AGENT_MAPPING_DEFAULT_LIMIT", "100")
@@ -63,7 +61,9 @@ class AppSettings:
         except (TypeError, ValueError) as exc:
             raise SettingsError(f"Invalid integer setting: {exc}") from exc
         return cls(
-            projects_root=Path(root_value).expanduser().resolve() if root_value is not None else None,
+            projects_root=Path(root_value).expanduser().resolve()
+            if root_value is not None
+            else None,
             backend=env.get("CONVERSION_AGENT_BACKEND", "anthropic").lower(),
             model=env.get("CONVERSION_AGENT_MODEL", "claude-opus-4-8"),
             **numeric,

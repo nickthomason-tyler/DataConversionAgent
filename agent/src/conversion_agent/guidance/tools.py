@@ -36,11 +36,11 @@ def build_tools(
         hits = knowledge_index.search(query)
         if not hits:
             return "No knowledge-base results. Say you don't know and escalate."
-        return "\n\n---\n\n".join(f"{hit.citation}\n{hit.text}" for hit in hits)[: settings.max_tool_chars]
+        return "\n\n---\n\n".join(f"{hit.citation}\n{hit.text}" for hit in hits)[
+            : settings.max_tool_chars
+        ]
 
-    def get_mapping_status(
-        status_filter: str = "", limit: int = 100, offset: int = 0
-    ) -> str:
+    def get_mapping_status(status_filter: str = "", limit: int = 100, offset: int = 0) -> str:
         """Return a bounded page of active-project source-to-target mappings."""
         limit = max(1, min(limit, settings.mapping_max_limit))
         offset = max(0, offset)
@@ -100,7 +100,7 @@ def build_tools(
             profile = {entity.lower(): match}
         return json.dumps(to_json_compatible(profile), indent=2)[: settings.max_tool_chars]
 
-    handlers = {
+    handlers: dict[str, Callable[..., str]] = {
         "search_knowledge_base": search_knowledge_base,
         "lookup_dct_field": lookup_dct_field,
         "get_mapping_status": get_mapping_status,

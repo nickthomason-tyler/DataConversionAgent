@@ -138,7 +138,9 @@ def test_rejects_whitespace_only_metadata_values(project_root, field, value) -> 
         FilesystemProjectRepository(project_root).load("alpha")
 
 
-@pytest.mark.parametrize("artifact", ["project.yaml", "mapping_workbook.csv", "profile_summary.json"])
+@pytest.mark.parametrize(
+    "artifact", ["project.yaml", "mapping_workbook.csv", "profile_summary.json"]
+)
 def test_rejects_non_utf8_project_artifacts(project_root: Path, artifact: str) -> None:
     (project_root / "alpha" / artifact).write_bytes(b"\xff")
 
@@ -163,7 +165,10 @@ def test_rejects_non_utf8_project_artifacts(project_root: Path, artifact: str) -
                 "extra value",
             ],
         ),
-        (MAPPING_HEADERS, ["PERMITS", "", "permit", "permit_type", "crosswalk", "draft", "analyst"]),
+        (
+            MAPPING_HEADERS,
+            ["PERMITS", "", "permit", "permit_type", "crosswalk", "draft", "analyst"],
+        ),
         (MAPPING_HEADERS[:-1], ["PERMITS", "TYPE", "permit", "permit_type", "crosswalk", "draft"]),
     ],
     ids=["short-row-none", "extra-cell", "blank-required-value", "header-width-mismatch"],

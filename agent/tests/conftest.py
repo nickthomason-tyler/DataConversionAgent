@@ -3,9 +3,21 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 import yaml
+
+
+@pytest.fixture(scope="session")
+def built_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    out = tmp_path_factory.mktemp("wheel")
+    subprocess.run(
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out)],
+        check=True,
+    )
+    return next(out.glob("*.whl"))
 
 
 @pytest.fixture
@@ -75,9 +87,7 @@ def two_project_root(tmp_path: Path) -> Path:
             ),
             encoding="utf-8",
         )
-        with (project / "mapping_workbook.csv").open(
-            "w", encoding="utf-8", newline=""
-        ) as handle:
+        with (project / "mapping_workbook.csv").open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(
                 handle,
                 fieldnames=[

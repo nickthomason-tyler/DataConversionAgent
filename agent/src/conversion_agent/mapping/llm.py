@@ -15,7 +15,8 @@ from ..guidance.backends import run_with_retries
 from .model import Proposal, Section
 
 BATCH = 40
-MIN_CONFIDENCE = 0.5   # below this we leave the row for a human
+MIN_CONFIDENCE = 0.5  # below this we leave the row for a human
+
 
 def build_system_prompt(source_system: str | None) -> str:
     """Build project-aware, source-neutral instructions for the model lane."""
@@ -76,7 +77,7 @@ def run(
     candidates = section.dest_lists[0]
     pending = section.unmatched
     for start in range(0, len(pending), BATCH):
-        batch = pending[start:start + BATCH]
+        batch = pending[start : start + BATCH]
         sources = [" | ".join(v for v in r.values if v) for r in batch]
         response = run_with_retries(
             lambda: client.messages.parse(
@@ -84,16 +85,18 @@ def run(
                 max_tokens=16000,
                 system=build_system_prompt(source_system),
                 output_config={"format": {"type": "json_schema", "schema": _schema(candidates)}},
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Section: {section.key}\n"
-                        f"Candidate destination values:\n"
-                        + "\n".join(f"- {c}" for c in candidates)
-                        + "\n\nMap each legacy value (return one entry per value, in order):\n"
-                        + "\n".join(f"- {s}" for s in sources)
-                    ),
-                }],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Section: {section.key}\n"
+                            f"Candidate destination values:\n"
+                            + "\n".join(f"- {c}" for c in candidates)
+                            + "\n\nMap each legacy value (return one entry per value, in order):\n"
+                            + "\n".join(f"- {s}" for s in sources)
+                        ),
+                    }
+                ],
             ),
             retries=retries,
         )
@@ -106,6 +109,8 @@ def run(
             if not m or m["match"] is None or m["confidence"] < MIN_CONFIDENCE:
                 continue
             section.proposals[row.row_idx] = Proposal(
-                dest=(m["match"],), method="llm",
+                dest=(m["match"],),
+                method="llm",
                 confidence=float(m["confidence"]),
-                note=f"proposed ({m['confidence']:.0%}): {m['rationale'][:160]}")
+                note=f"proposed ({m['confidence']:.0%}): {m['rationale'][:160]}",
+            )

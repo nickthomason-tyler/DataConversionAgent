@@ -51,9 +51,7 @@ def _spec_counts(spec: dict) -> dict[str, dict[str, tuple[int, int]]]:
                 raise WorkbookError(f"LookupSpec section {section} has invalid endpoints")
             source_columns = source.get("columns")
             destination_columns = destination.get("columns")
-            if not isinstance(source_columns, list) or not isinstance(
-                destination_columns, list
-            ):
+            if not isinstance(source_columns, list) or not isinstance(destination_columns, list):
                 raise WorkbookError(f"LookupSpec section {section} has invalid columns")
             counts_by_tab.setdefault(module, {})[section] = (
                 len(source_columns),
@@ -90,8 +88,14 @@ def _parse_visible_tab(ws, tab: str, spec_counts: dict[str, tuple[int, int]]) ->
             for c, v in enumerate(header):
                 if v and "note" in str(v).lower():
                     notes_col = c + 1
-            sec = Section(tab=tab, title=title or "?", src_cols=src_cols,
-                          dst_cols=dst_cols, notes_col=notes_col, header_row=i + 2)
+            sec = Section(
+                tab=tab,
+                title=title or "?",
+                src_cols=src_cols,
+                dst_cols=dst_cols,
+                notes_col=notes_col,
+                header_row=i + 2,
+            )
             j = i + 2
             while j < len(rows) and "Source DB" not in (rows[j] or ()):
                 j += 1
@@ -99,17 +103,13 @@ def _parse_visible_tab(ws, tab: str, spec_counts: dict[str, tuple[int, int]]) ->
             for k in range(i + 2, data_end):
                 dr = rows[k] or ()
                 src = tuple(
-                    str(dr[c - 1]).strip()
-                    if c - 1 < len(dr) and dr[c - 1] is not None
-                    else ""
+                    str(dr[c - 1]).strip() if c - 1 < len(dr) and dr[c - 1] is not None else ""
                     for c in src_cols
                 )
                 if not any(src):
                     continue
                 dst = tuple(
-                    str(dr[c - 1]).strip()
-                    if c - 1 < len(dr) and dr[c - 1] is not None
-                    else ""
+                    str(dr[c - 1]).strip() if c - 1 < len(dr) and dr[c - 1] is not None else ""
                     for c in dst_cols
                 )
                 sec.rows.append(SourceRow(row_idx=k + 1, values=src, existing=dst))

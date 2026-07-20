@@ -21,14 +21,30 @@ from .model import Proposal, Section
 # (incl. New World Permitting). Deterministic, token-level, applied at the
 # strongest normalization level only.
 ABBREV = {
-    "com": "commercial", "comm": "commercial", "res": "residential",
-    "bldg": "building", "bld": "building", "elec": "electrical",
-    "mech": "mechanical", "plmb": "plumbing", "plum": "plumbing",
-    "demo": "demolition", "add": "addition", "alt": "alteration",
-    "insp": "inspection", "cert": "certificate", "occ": "occupancy",
-    "lic": "license", "reg": "registration", "irr": "irrigation",
-    "pp": "private provider", "rev": "revision", "temp": "temporary",
-    "misc": "miscellaneous", "equip": "equipment", "gen": "generator",
+    "com": "commercial",
+    "comm": "commercial",
+    "res": "residential",
+    "bldg": "building",
+    "bld": "building",
+    "elec": "electrical",
+    "mech": "mechanical",
+    "plmb": "plumbing",
+    "plum": "plumbing",
+    "demo": "demolition",
+    "add": "addition",
+    "alt": "alteration",
+    "insp": "inspection",
+    "cert": "certificate",
+    "occ": "occupancy",
+    "lic": "license",
+    "reg": "registration",
+    "irr": "irrigation",
+    "pp": "private provider",
+    "rev": "revision",
+    "temp": "temporary",
+    "misc": "miscellaneous",
+    "equip": "equipment",
+    "gen": "generator",
 }
 
 _PUNCT = re.compile(r"[-_/&.,()+:;]+")
@@ -60,11 +76,17 @@ class Matcher:
             # dedupe (order-preserving) so joined source columns like
             # "1C-ELEC 1COM-ELECTRICAL" collapse to "commercial electrical"
             seen: set[str] = set()
-            tokens = [t for t in tokens if not (t in seen or seen.add(t))]
-            s = " ".join(tokens)
+            deduplicated: list[str] = []
+            for token in tokens:
+                if token not in seen:
+                    seen.add(token)
+                    deduplicated.append(token)
+            s = " ".join(deduplicated)
         return s
 
-    def match_one(self, value: str, candidates: list[str], max_level: int) -> tuple[str, str] | None:
+    def match_one(
+        self, value: str, candidates: list[str], max_level: int
+    ) -> tuple[str, str] | None:
         """Return (candidate, method) when exactly one candidate matches."""
         if not value.strip():
             return None
@@ -79,8 +101,9 @@ class Matcher:
                 return None  # ambiguous; stronger levels only blur further
         return None
 
-    def match_first(self, values: list[str], candidates: list[str],
-                    max_level: int) -> tuple[str, str] | None:
+    def match_first(
+        self, values: list[str], candidates: list[str], max_level: int
+    ) -> tuple[str, str] | None:
         for v in values:
             m = self.match_one(v, candidates, max_level)
             if m:
@@ -107,8 +130,7 @@ class Matcher:
         return None
 
 
-def run(section: Section, max_level: int = 3,
-        token_map: dict[str, str] | None = None) -> None:
+def run(section: Section, max_level: int = 3, token_map: dict[str, str] | None = None) -> None:
     """Populate section.proposals with deterministic matches."""
     if not section.dest_lists:
         return
@@ -129,35 +151,44 @@ def run(section: Section, max_level: int = 3,
             m = matcher.match_first([" ".join(src), *src], section.dest_lists[0], max_level)
             if m:
                 section.proposals[row.row_idx] = Proposal(
-                    dest=(m[0],), method=m[1], confidence=1.0, note=f"auto ({m[1]})")
+                    dest=(m[0],), method=m[1], confidence=1.0, note=f"auto ({m[1]})"
+                )
             continue
 
         if n_dst == 2 and len(section.dest_lists) >= 2:
             # Column 1: joined leading source columns first, then each column.
             lead = src[:-1] if len(src) > 1 else src
-            m1 = matcher.match_first([" ".join(lead), *reversed(src)],
-                                     section.dest_lists[0], max_level)
+            m1 = matcher.match_first(
+                [" ".join(lead), *reversed(src)], section.dest_lists[0], max_level
+            )
             if not m1:
                 continue
             pool = section.cascade.get(m1[0]) or section.dest_lists[1]
+            m2: tuple[str, str] | None
             if len(pool) == 1:
                 m2 = (pool[0], "cascade-single")  # only one valid pairing exists
             else:
-                m2 = (matcher.match_first([src[-1], " ".join(src)], pool, max_level)
-                      or matcher.match_subset(" ".join(src), pool))
+                m2 = matcher.match_first(
+                    [src[-1], " ".join(src)], pool, max_level
+                ) or matcher.match_subset(" ".join(src), pool)
             if not m2:
                 continue
             if section.cascade and m2[0] not in section.cascade.get(m1[0], [m2[0]]):
                 continue
             method = m1[1] if m1[1] == m2[1] else f"{m1[1]}+{m2[1]}"
             section.proposals[row.row_idx] = Proposal(
-                dest=(m1[0], m2[0]), method=method, confidence=1.0,
-                note=f"auto ({method})")
+                dest=(m1[0], m2[0]), method=method, confidence=1.0, note=f"auto ({method})"
+            )
 
 
 def stats(section: Section) -> dict:
     total = len(section.rows)
     pre = sum(1 for r in section.rows if any(v.strip() for v in r.existing))
     auto = len(section.proposals)
-    return {"section": section.key, "rows": total, "premapped": pre,
-            "auto": auto, "remaining": total - pre - auto}
+    return {
+        "section": section.key,
+        "rows": total,
+        "premapped": pre,
+        "auto": auto,
+        "remaining": total - pre - auto,
+    }

@@ -50,7 +50,7 @@ def _crosswalk(
                     b'<extLst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
                     b'<ext uri="{CCE6A557-97BC-4B89-ADB6-D9C93CAAB3DF}">'
                     b'<x14:dataValidations xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"/>'
-                    b'</ext></extLst>'
+                    b"</ext></extLst>"
                 )
                 root.append(ext)
                 content = etree.tostring(root, xml_declaration=True, encoding="UTF-8")
@@ -66,9 +66,7 @@ def _crosswalk(
         header_row=2,
         rows=[SourceRow(row_idx=3, values=("Legacy type",), existing=("",))],
         proposals={
-            3: Proposal(
-                dest=proposal_dest, method="exact", confidence=1.0, note=proposal_note
-            )
+            3: Proposal(dest=proposal_dest, method="exact", confidence=1.0, note=proposal_note)
         },
     )
     return path, CrosswalkWorkbook(path=str(path), spec={"modules": {}}, sections=[section])
@@ -87,9 +85,7 @@ def _rewrite_package(path: Path, mutate) -> None:
 def _cell_text(path: Path, ref: str) -> str:
     with zipfile.ZipFile(path) as package:
         root = etree.fromstring(package.read("xl/worksheets/sheet1.xml"))
-    return root.xpath(
-        f"string(.//m:c[@r='{ref}']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN}
-    )
+    return root.xpath(f"string(.//m:c[@r='{ref}']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN})
 
 
 def test_write_refuses_input_as_output(tmp_path: Path) -> None:
@@ -209,9 +205,10 @@ def test_write_reports_style_failures_without_losing_value(monkeypatch, tmp_path
     )
     with zipfile.ZipFile(output) as package:
         root = etree.fromstring(package.read("xl/worksheets/sheet1.xml"))
-    assert root.xpath(
-        "string(.//m:c[@r='B3']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN}
-    ) == "Approved "
+    assert (
+        root.xpath("string(.//m:c[@r='B3']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN})
+        == "Approved "
+    )
 
 
 def test_style_failure_keeps_untouched_styles_byte_for_byte(monkeypatch, tmp_path: Path) -> None:
@@ -266,7 +263,9 @@ def test_verify_rejects_corrupted_hidden_sheet_and_lookup_spec(tmp_path: Path) -
     writeback.write(model, str(output))
     _rewrite_package(
         output,
-        lambda name, content: content + b"corrupt" if name == "xl/worksheets/sheet2.xml" else content,
+        lambda name, content: (
+            content + b"corrupt" if name == "xl/worksheets/sheet2.xml" else content
+        ),
     )
 
     with pytest.raises(OutputError, match="Untouched workbook part"):
@@ -280,7 +279,9 @@ def test_verify_rejects_corrupted_hidden_sheet_and_lookup_spec(tmp_path: Path) -
     writeback.write(model, str(output), overwrite=True)
     _rewrite_package(
         output,
-        lambda name, content: content + b"corrupt" if name == "xl/worksheets/sheet3.xml" else content,
+        lambda name, content: (
+            content + b"corrupt" if name == "xl/worksheets/sheet3.xml" else content
+        ),
     )
 
     with pytest.raises(OutputError, match="Untouched workbook part"):
@@ -297,13 +298,17 @@ def test_verify_rejects_missing_hidden_sheet_and_lookup_spec(tmp_path: Path) -> 
     output = tmp_path / "out.xlsx"
     expected = (writeback.CellEdit("xl/worksheets/sheet1.xml", "B3", "Approved "),)
     writeback.write(model, str(output))
-    _rewrite_package(output, lambda name, content: None if name == "xl/worksheets/sheet2.xml" else content)
+    _rewrite_package(
+        output, lambda name, content: None if name == "xl/worksheets/sheet2.xml" else content
+    )
 
     with pytest.raises(OutputError, match="package members"):
         writeback.verify_output(source, output, expected, styles_changed=True)
 
     writeback.write(model, str(output), overwrite=True)
-    _rewrite_package(output, lambda name, content: None if name == "xl/worksheets/sheet3.xml" else content)
+    _rewrite_package(
+        output, lambda name, content: None if name == "xl/worksheets/sheet3.xml" else content
+    )
 
     with pytest.raises(OutputError, match="package members"):
         writeback.verify_output(source, output, expected, styles_changed=True)

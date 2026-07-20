@@ -1,0 +1,25 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e './agent[dev,dct-build]'
+      - run: ruff check agent/src agent/tests agent/evals agent/dct
+      - run: ruff format --check agent/src agent/tests agent/evals agent/dct
+      - run: mypy agent/src
+      - run: python -m pytest agent/tests -m 'not live' -v
+      - run: python -m build --wheel agent

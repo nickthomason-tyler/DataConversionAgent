@@ -56,8 +56,9 @@ def _cell_ref_col(ref: str) -> int:
 def _sheet_paths(zf: zipfile.ZipFile) -> dict[str, str]:
     wb = etree.fromstring(zf.read("xl/workbook.xml"))
     rels = etree.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
-    target_by_id = {r.get("Id"): r.get("Target")
-                    for r in rels.findall(f"{{{NS_PKGREL}}}Relationship")}
+    target_by_id = {
+        r.get("Id"): r.get("Target") for r in rels.findall(f"{{{NS_PKGREL}}}Relationship")
+    }
     out = {}
     for sheet in wb.findall(f"{{{NS_MAIN}}}sheets/{{{NS_MAIN}}}sheet"):
         target = target_by_id[sheet.get(f"{{{NS_REL}}}id")]
@@ -83,8 +84,7 @@ class _StyleCloner:
     def _fill_id(self, kind: str) -> int:
         if kind not in self.fill_ids:
             fill = etree.SubElement(self.fills, f"{{{NS_MAIN}}}fill")
-            pf = etree.SubElement(fill, f"{{{NS_MAIN}}}patternFill",
-                                  patternType="solid")
+            pf = etree.SubElement(fill, f"{{{NS_MAIN}}}patternFill", patternType="solid")
             etree.SubElement(pf, f"{{{NS_MAIN}}}fgColor", rgb=FILL_RGB[kind])
             etree.SubElement(pf, f"{{{NS_MAIN}}}bgColor", indexed="64")
             self.fill_ids[kind] = len(self.fills) - 1
@@ -106,8 +106,15 @@ class _StyleCloner:
         return str(self.xf_cache[key])
 
 
-def _set_cell(sheet_root, row_idx: int, col_idx: int, text: str,
-              cloner: _StyleCloner | None, kind: str, warnings: list[str]) -> None:
+def _set_cell(
+    sheet_root,
+    row_idx: int,
+    col_idx: int,
+    text: str,
+    cloner: _StyleCloner | None,
+    kind: str,
+    warnings: list[str],
+) -> None:
     sheet_data = sheet_root.find(f"{{{NS_MAIN}}}sheetData")
     row = None
     for r in sheet_data.findall(f"{{{NS_MAIN}}}row"):
@@ -323,7 +330,9 @@ def write(model: CrosswalkWorkbook, out_path: str, overwrite: bool = False) -> W
     os.close(fd)
     temporary = Path(temporary_name)
     try:
-        report, expected_edits, styles_changed = _write_package(model, temporary, overwrite=overwrite)
+        report, expected_edits, styles_changed = _write_package(
+            model, temporary, overwrite=overwrite
+        )
         verify_output(source, temporary, expected_edits, styles_changed=styles_changed)
         os.replace(temporary, output)
         return report

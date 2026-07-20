@@ -48,9 +48,7 @@ def bound_tool_set(project_root):
 
 
 def test_mapping_tool_is_bounded(bound_tool_set) -> None:
-    result = json.loads(
-        bound_tool_set.call("get_mapping_status", {"limit": 1, "offset": 0})
-    )
+    result = json.loads(bound_tool_set.call("get_mapping_status", {"limit": 1, "offset": 0}))
 
     assert result["returned"] == 1
     assert result["truncated"] is True

@@ -85,7 +85,7 @@ def read_docs(docx_path: Path, table_names: set[str]) -> tuple[dict, dict, dict]
         lowered = text.lower()
         for name in names_sorted:
             if lowered.startswith(name):
-                rest = text[len(name):].lstrip(" :o-–").strip()
+                rest = text[len(name) :].lstrip(" :o-–").strip()
                 module_of.setdefault(name, current)
                 if rest and name not in descriptions:
                     descriptions[name] = re.sub(r"\s+", " ", rest)[:300]
