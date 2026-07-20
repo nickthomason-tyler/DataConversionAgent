@@ -5,8 +5,10 @@ Usage:
         <DCT-DB_V*.docx> <version-label>
 
 Reads the datatype/values spreadsheet (authoritative table+column schema) and
-the DCT-DB Word documentation (module groupings and table descriptions), and
-writes the packaged dictionary resource. Re-run per DCT release.
+the DCT-DB Word documentation (module groupings and table descriptions), then
+writes the canonical packaged dictionary resource at
+``src/conversion_agent/resources/data/dct/dictionary.yaml``. Re-run per DCT
+release and review the generated resource before committing it.
 """
 
 from __future__ import annotations
