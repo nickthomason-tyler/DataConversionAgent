@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import sys
 from dataclasses import dataclass
 
-from . import writeback
 from .model import Proposal
 from .validation import (
     ProposalDocument,
     ProposalInput,
-    load_validated_workbook,
     validate_proposal_document,
 )
 
@@ -104,31 +100,12 @@ def validate_proposals(model, payload: object) -> ProposalApplicationReport:
     return apply_typed(model, validate_proposal_document(payload))
 
 
-def main() -> None:
-    if len(sys.argv) != 4:
-        print(__doc__)
-        raise SystemExit(1)
-    input_path, proposals_path, output_path = sys.argv[1:4]
-    payload = json.loads(open(proposals_path, encoding="utf-8").read())
-    model = load_validated_workbook(input_path)
-    report = validate_proposals(model, payload)
-    written = writeback.write(model, output_path)
-    print(
-        json.dumps(
-            {
-                "validation": {
-                    "accepted": len(report.accepted),
-                    "no_good_match": len(report.no_match),
-                    "rejected": [
-                        (rejection.source, rejection.reason) for rejection in report.rejected
-                    ],
-                },
-                "written": written.as_dict(),
-            },
-            indent=2,
-        )
-    )
+def main(argv=None) -> int:
+    """Compatibility entry point for ``python -m conversion_agent.mapping.apply``."""
+    from conversion_agent.cli.apply import main as cli_main
+
+    return cli_main(argv)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

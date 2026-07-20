@@ -11,6 +11,11 @@ dependencies = [
     "lxml>=5,<7",
 ]
 
+[project.scripts]
+conversion-agent = "conversion_agent.cli.guidance:main"
+conversion-map = "conversion_agent.cli.mapping:main"
+conversion-apply = "conversion_agent.cli.apply:main"
+
 [project.optional-dependencies]
 dct-build = ["python-docx>=1.1,<2"]
 dev = [
