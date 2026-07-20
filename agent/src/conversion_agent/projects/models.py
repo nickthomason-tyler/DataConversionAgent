@@ -41,6 +41,27 @@ class ProjectContext:
     knowledge_dir: Path | None
 
     @property
+    def name(self) -> str:
+        """Legacy alias retained for the current CLI and tool surface."""
+        return self.project_id
+
+    @property
+    def project(self) -> Mapping[str, Any]:
+        """Legacy project-document view backed by immutable typed metadata."""
+        return MappingProxyType(
+            {
+                "schema_version": self.metadata.schema_version,
+                "client_name": self.metadata.client_name,
+                "source_system": self.metadata.source_system,
+                "phase": self.metadata.phase,
+                "in_scope_entities": self.metadata.in_scope_entities,
+                "conversion_lead": self.metadata.conversion_lead,
+                "client_data_steward": self.metadata.client_data_steward,
+                **self.metadata.extras,
+            }
+        )
+
+    @property
     def mapping_status_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for row in self.mapping_rows:

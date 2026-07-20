@@ -7,6 +7,7 @@ The active ProjectContext is set once per session by the CLI/service layer.
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 
 from anthropic import beta_tool
 
@@ -95,8 +96,16 @@ def get_mapping_status(status_filter: str = "") -> str:
     project = _require_project()
     rows = project.mapping_rows
     if status_filter:
-        rows = [r for r in rows if r.get("status", "").strip().lower() == status_filter.strip().lower()]
-    summary = {"client": project.name, "status_counts": project.mapping_status_counts, "rows": rows}
+        rows = tuple(
+            row
+            for row in rows
+            if row.status.strip().lower() == status_filter.strip().lower()
+        )
+    summary = {
+        "client": project.name,
+        "status_counts": project.mapping_status_counts,
+        "rows": [asdict(row) for row in rows],
+    }
     return json.dumps(summary, indent=2)
 
 

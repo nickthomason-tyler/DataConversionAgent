@@ -63,19 +63,23 @@ class FilesystemProjectRepository:
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
             doc = _ProjectDocument.model_validate(raw)
-        except (OSError, yaml.YAMLError, ValidationError) as exc:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as exc:
             raise ProjectValidationError(f"Invalid {path}: {exc}") from exc
 
+        client_name = _required_text(doc.client_name, "client_name", path)
+        source_system = _required_text(doc.source_system, "source_system", path)
+        phase = _required_text(doc.phase, "phase", path)
         in_scope_entities = tuple(
-            dict.fromkeys(entity.strip() for entity in doc.in_scope_entities if entity.strip())
+            dict.fromkeys(
+                _required_text(entity, "in_scope_entities", path)
+                for entity in doc.in_scope_entities
+            )
         )
-        if not in_scope_entities:
-            raise ProjectValidationError(f"Invalid {path}: in_scope_entities cannot be empty")
         return ProjectMetadata(
             schema_version=doc.schema_version,
-            client_name=doc.client_name.strip(),
-            source_system=doc.source_system.strip(),
-            phase=doc.phase.strip(),
+            client_name=client_name,
+            source_system=source_system,
+            phase=phase,
             in_scope_entities=in_scope_entities,
             conversion_lead=doc.conversion_lead,
             client_data_steward=doc.client_data_steward,
@@ -94,7 +98,7 @@ class FilesystemProjectRepository:
                 return tuple(
                     MappingRow(**{name: row[name] for name in MAPPING_FIELDS}) for row in reader
                 )
-        except (OSError, csv.Error, KeyError, TypeError) as exc:
+        except (OSError, UnicodeDecodeError, csv.Error, KeyError, TypeError) as exc:
             raise ProjectValidationError(f"Invalid mapping workbook {path}: {exc}") from exc
 
     @staticmethod
@@ -103,10 +107,17 @@ class FilesystemProjectRepository:
             return {}
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ProjectValidationError(f"Invalid profile summary {path}: {exc}") from exc
         if not isinstance(value, dict) or not isinstance(value.get("entities", {}), dict):
             raise ProjectValidationError(
                 f"Profile must be an object with object-valued entities: {path}"
             )
         return value
+
+
+def _required_text(value: str, field: str, path: Path) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ProjectValidationError(f"Invalid {path}: {field} cannot be blank")
+    return normalized
