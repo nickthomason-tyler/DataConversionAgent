@@ -8,29 +8,65 @@ from types import SimpleNamespace
 
 import yaml
 
+from conversion_agent.projects.filesystem import FilesystemProjectRepository
+from conversion_agent.resources.catalog import ResourceCatalog
+from conversion_agent.resources.knowledge import KnowledgeIndex
+
 
 ROOT = Path(__file__).parents[2]
 
 
 def test_example_project_declares_schema_v1_and_safe_overlay() -> None:
-    project = yaml.safe_load((ROOT / "agent/clients/example-client/project.yaml").read_text())
+    project_file = ROOT / "agent/clients/example-client/project.yaml"
+    project = yaml.safe_load(project_file.read_text())
     overlay = ROOT / "agent/clients/example-client/knowledge/example-project-rule.md"
 
     assert project["schema_version"] == 1
     assert overlay.is_file()
     assert "Exampleton" in overlay.read_text(encoding="utf-8")
 
+    context = FilesystemProjectRepository(project_file.parent.parent).load("example-client")
+    index = KnowledgeIndex.for_project(ResourceCatalog().shared_knowledge(), context)
+    overlay_chunk = next(
+        chunk for chunk in index.search("Exampleton sequencing") if chunk.scope == "project"
+    )
+    shared_chunk = next(
+        chunk
+        for chunk in index.search("sentinel date handling")
+        if chunk.source == "decisions/sentinel-dates.md" and chunk.scope == "shared"
+    )
+
+    assert overlay_chunk.citation == (
+        "[project source: example-client/knowledge/example-project-rule.md "
+        "§ Exampleton business-license sequencing]"
+    )
+    assert shared_chunk.citation == ("[source: decisions/sentinel-dates.md § Decision]")
+
 
 def test_readmes_document_external_projects_and_offline_tests() -> None:
     agent_readme = (ROOT / "agent/README.md").read_text(encoding="utf-8")
     root_readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "CONVERSION_AGENT_PROJECTS_ROOT" in agent_readme
-    assert "knowledge/" in agent_readme
-    assert "pytest tests -m 'not live'" in agent_readme
-    assert "[project source: ...]" in agent_readme
+    assert "export CONVERSION_AGENT_PROJECTS_ROOT=/approved/path/to/projects" in agent_readme
+    assert "conversion-agent example-client" in agent_readme
+    assert "conversion-map input.xlsx output.xlsx --project example-client --llm" in agent_readme
+    assert "python -m pytest tests -m 'not live' -v" in agent_readme
+    assert "python -m pytest -m live -v" in agent_readme
+    assert (
+        "ANTHROPIC_API_KEY=... python -m pytest tests/guidance/test_live_smoke.py -m live -v"
+    ) in agent_readme
+    assert (
+        "CONVERSION_AGENT_LIVE_BEDROCK=1 CONVERSION_AGENT_BACKEND=bedrock "
+        "AWS_REGION=us-east-1 python -m pytest tests/guidance/test_live_smoke.py -m live -v"
+    ) in agent_readme
+    assert (
+        "`--projects-root` takes precedence over `CONVERSION_AGENT_PROJECTS_ROOT`, which\n"
+        "takes precedence over the source-checkout example project."
+    ) in agent_readme
+    assert "An installed wheel\nhas no fallback client storage" in agent_readme
+    assert "[project source: <project-id>/<path> § <heading>]" in agent_readme
     assert "conversion-agent example-client" in root_readme
-    assert "conversion_agent/resources/data/" in root_readme
+    assert "agent/src/conversion_agent/resources/data/" in root_readme
 
 
 def test_eval_runner_opens_a_fresh_service_session_per_question(

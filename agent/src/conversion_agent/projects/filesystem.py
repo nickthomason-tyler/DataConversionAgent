@@ -69,11 +69,12 @@ class FilesystemProjectRepository:
         source_system = _required_text(doc.source_system, "source_system", path)
         phase = _required_text(doc.phase, "phase", path)
         in_scope_entities = tuple(
-            dict.fromkeys(
-                _required_text(entity, "in_scope_entities", path)
-                for entity in doc.in_scope_entities
-            )
+            _required_text(entity, "in_scope_entities", path) for entity in doc.in_scope_entities
         )
+        if len({entity.casefold() for entity in in_scope_entities}) != len(in_scope_entities):
+            raise ProjectValidationError(
+                f"Invalid {path}: in_scope_entities must contain unique values."
+            )
         return ProjectMetadata(
             schema_version=doc.schema_version,
             client_name=client_name,

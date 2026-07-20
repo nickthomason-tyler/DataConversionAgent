@@ -113,11 +113,21 @@ python -m pytest tests -m 'not live' -v
 ```
 
 Live backend tests are opt-in and must run only in an explicitly configured
-Anthropic or Bedrock environment:
+Anthropic or Bedrock environment. The tests are always collected, then skip
+without the required credential configuration, so the default offline suite
+never sends a network request.
 
 ```bash
 python -m pytest -m live -v
+ANTHROPIC_API_KEY=... python -m pytest tests/guidance/test_live_smoke.py -m live -v
+CONVERSION_AGENT_LIVE_BEDROCK=1 CONVERSION_AGENT_BACKEND=bedrock AWS_REGION=us-east-1 python -m pytest tests/guidance/test_live_smoke.py -m live -v
 ```
+
+The Bedrock smoke command also requires a standard AWS credential source such
+as `AWS_PROFILE` or `AWS_ACCESS_KEY_ID`; use the explicit
+`CONVERSION_AGENT_LIVE_BEDROCK=1` opt-in when an instance role supplies those
+credentials. To list these tests without contacting either backend, run
+`python -m pytest --collect-only -m live`.
 
 The golden-question runner uses the same settings, repository, resource catalog,
 and guidance service as the CLI. It calls the live configured backend and writes

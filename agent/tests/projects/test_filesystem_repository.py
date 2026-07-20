@@ -139,6 +139,24 @@ def test_rejects_whitespace_only_metadata_values(project_root, field, value) -> 
 
 
 @pytest.mark.parametrize(
+    "entities",
+    [
+        ["permits", "permits"],
+        [" permits ", "permits"],
+        ["PERMITS", "permits"],
+    ],
+)
+def test_rejects_duplicate_normalized_in_scope_entities(project_root, entities) -> None:
+    project_file = project_root / "alpha" / "project.yaml"
+    document = yaml.safe_load(project_file.read_text(encoding="utf-8"))
+    document["in_scope_entities"] = entities
+    project_file.write_text(yaml.safe_dump(document), encoding="utf-8")
+
+    with pytest.raises(ProjectValidationError, match=r"project.yaml.*in_scope_entities"):
+        FilesystemProjectRepository(project_root).load("alpha")
+
+
+@pytest.mark.parametrize(
     "artifact", ["project.yaml", "mapping_workbook.csv", "profile_summary.json"]
 )
 def test_rejects_non_utf8_project_artifacts(project_root: Path, artifact: str) -> None:
