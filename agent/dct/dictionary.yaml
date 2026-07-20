@@ -1,0 +1,63 @@
+# Data Conversion Template data dictionary (sample seed).
+# Replace with the real DCT extracted from the template database (launch
+# playbook step 3.1). This one file powers both the agent's lookup tool and
+# the mapping-workbook CI validator, so keep it authoritative and versioned.
+
+version: "0.1-sample"
+tables:
+  PERMIT_CASE:
+    description: Core permit case record migrated into EPL case management.
+    columns:
+      CASE_NUMBER:
+        description: Legacy permit number, unique per case. Preserved for public lookup continuity.
+        required: true
+        type: varchar(50)
+      CASE_TYPE:
+        description: Must match a configured EPL Case Type.
+        required: true
+        type: varchar(100)
+        config_dependency: "EPL > Case Types (Permits)"
+        valid_values_source: crosswalk:case_type
+      STATUS:
+        description: Current workflow status; must match a configured status in the case type's workflow.
+        required: true
+        type: varchar(60)
+        config_dependency: "EPL > Workflows > Statuses"
+        valid_values_source: crosswalk:permit_status
+      APPLIED_DATE:
+        description: Application date, ISO-8601. Sentinel legacy dates (1900-01-01) must be nulled or dispositioned in DQ.
+        required: true
+        type: date
+      PARCEL_ID:
+        description: Foreign key to PARCEL.PARCEL_ID (GIS-linked).
+        required: false
+        type: varchar(40)
+  CONTACT:
+    description: People and companies attached to cases (applicant, contractor, owner).
+    columns:
+      CONTACT_ID:
+        description: Surrogate key generated during conversion; stable across mock cycles via deterministic hashing of the legacy key.
+        required: true
+        type: varchar(40)
+      CONTACT_TYPE:
+        description: Role of the contact on the case.
+        required: true
+        type: varchar(40)
+        config_dependency: "EPL > Contact Types"
+        valid_values_source: crosswalk:contact_type
+      EMAIL:
+        description: Validated format at DQ stage; invalid emails logged, not dropped.
+        required: false
+        type: varchar(255)
+  BUSINESS_LICENSE:
+    description: Business license records for licensing module conversions.
+    columns:
+      LICENSE_NUMBER:
+        description: Legacy license number, unique per license year.
+        required: true
+        type: varchar(50)
+      NAICS_CODE:
+        description: 2022 NAICS code; drives license category configuration.
+        required: false
+        type: varchar(10)
+        config_dependency: "EPL > License Categories (NAICS schedule)"

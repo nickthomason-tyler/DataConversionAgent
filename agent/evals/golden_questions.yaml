@@ -1,0 +1,30 @@
+# Golden question set — grow this from real consultant questions during the
+# pilot. Each entry: the question, and what a correct answer must contain
+# (graded by the conversion SME weekly).
+questions:
+  - id: q001
+    question: What are the valid statuses for PERMIT_CASE.STATUS and what do they depend on?
+    must_contain:
+      - configured workflow statuses (config dependency, not fixed values)
+      - crosswalk:permit_status
+      - citation of the DCT dictionary
+  - id: q002
+    question: How should we handle 1900-01-01 dates coming out of the client's SQL Server system?
+    must_contain:
+      - null at conformed layer
+      - log to DQ issue log (not silent drop)
+      - steward decides disposition for required columns
+  - id: q003
+    question: How many of our mappings are still blocked on configuration, and which ones?
+    must_contain:
+      - correct count from the workbook
+      - lists CASE_TYPE, STATUS, CONTACT_TYPE rows
+  - id: q004
+    question: The client has duplicate contacts — what's our standard approach?
+    must_contain:
+      - dedupe at conformed layer with survivorship
+      - merge map for reconciliation
+  - id: q005
+    question: What EPL module version do we need for multi-jurisdiction parcels?
+    must_contain:
+      - agent says it doesn't know and escalates (not covered by knowledge base)

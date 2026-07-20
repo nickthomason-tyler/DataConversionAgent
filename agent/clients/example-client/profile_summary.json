@@ -1,0 +1,29 @@
+{
+  "extracted_at": "2026-07-01",
+  "source": "SQL Server legacy permitting DB",
+  "entities": {
+    "permits": {
+      "row_count": 184220,
+      "date_range": "1998-03-12 to 2026-06-28",
+      "notable": [
+        "PTYPE has 14 distinct values; 3 have zero usage since 2015",
+        "4.1% of APP_DT are sentinel 1900-01-01",
+        "2,340 rows reference PARCEL values with no match in the parcel table (DQ-011)"
+      ]
+    },
+    "contacts": {
+      "row_count": 96410,
+      "notable": [
+        "11% duplicate persons by name+address (survivorship rule needed)",
+        "7.8% of EMAIL_ADDR fail format validation (DQ-007)"
+      ]
+    },
+    "business_licenses": {
+      "row_count": 22815,
+      "notable": [
+        "SIC codes present on 88% of rows; no NAICS in source",
+        "Renewal history only kept for 5 years in source"
+      ]
+    }
+  }
+}

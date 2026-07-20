@@ -1,0 +1,11 @@
+source_table,source_column,target_table,target_column,rule,status,owner
+PERMITS,PERMIT_NO,PERMIT_CASE,CASE_NUMBER,Direct copy,confirmed,analyst1
+PERMITS,PTYPE,PERMIT_CASE,CASE_TYPE,Crosswalk case_type (legacy 14 values -> configured types),blocked-on-config,analyst1
+PERMITS,STAT_CD,PERMIT_CASE,STATUS,Crosswalk permit_status; provisional default SUBMITTED,blocked-on-config,analyst1
+PERMITS,APP_DT,PERMIT_CASE,APPLIED_DATE,Null sentinel 1900-01-01; DQ rule DQ-004,confirmed,analyst2
+PERMITS,PARCEL,PERMIT_CASE,PARCEL_ID,Trim + uppercase; orphans logged DQ-011,draft,analyst2
+PEOPLE,PERSON_ID,CONTACT,CONTACT_ID,Deterministic hash of legacy key,confirmed,analyst1
+PEOPLE,ROLE,CONTACT,CONTACT_TYPE,Crosswalk contact_type,blocked-on-config,analyst1
+PEOPLE,EMAIL_ADDR,CONTACT,EMAIL,Lowercase; format check DQ-007,confirmed,analyst2
+BUSLIC,LIC_NO,BUSINESS_LICENSE,LICENSE_NUMBER,Direct copy,confirmed,analyst1
+BUSLIC,SIC,BUSINESS_LICENSE,NAICS_CODE,SIC->NAICS crosswalk table v2022,draft,analyst2

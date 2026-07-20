@@ -1,0 +1,6 @@
+client_name: City of Exampleton
+source_system: SQL Server (legacy permitting system)
+phase: Mock 1
+in_scope_entities: [permits, contacts, business_licenses]
+conversion_lead: TBD
+client_data_steward: TBD
