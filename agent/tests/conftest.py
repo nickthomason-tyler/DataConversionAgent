@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,9 +14,16 @@ import yaml
 @pytest.fixture(scope="session")
 def built_wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     out = tmp_path_factory.mktemp("wheel")
+    environment = {
+        **os.environ,
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+        "PIP_NO_INDEX": "1",
+    }
     subprocess.run(
-        [sys.executable, "-m", "build", "--wheel", "--outdir", str(out)],
+        [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", str(out)],
         check=True,
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
     )
     return next(out.glob("*.whl"))
 

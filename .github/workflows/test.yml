@@ -8,6 +8,9 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -17,9 +20,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: python -m pip install -e './agent[dev,dct-build]'
-      - run: ruff check agent/src agent/tests agent/evals agent/dct
-      - run: ruff format --check agent/src agent/tests agent/evals agent/dct
-      - run: mypy agent/src
-      - run: python -m pytest agent/tests -m 'not live' -v
-      - run: python -m build --wheel agent
+      - run: python -m pip install -e '.[dev,dct-build]'
+      - run: ruff check src tests evals dct
+      - run: ruff format --check src tests evals dct
+      - run: mypy src
+      - run: python -m pytest tests -m 'not live' -v
+      - run: python -m build --wheel --no-isolation
