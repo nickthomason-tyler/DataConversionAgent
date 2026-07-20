@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import anthropic
 
+from .. import backend
 from .model import Proposal, Section
 
-MODEL = "claude-opus-4-8"
 BATCH = 40
 MIN_CONFIDENCE = 0.5   # below this we leave the row for a human
 
@@ -65,14 +65,14 @@ def run(section: Section, client: anthropic.Anthropic | None = None) -> None:
     """Propose mappings for rows Lane 1 left unmatched (single-dest sections)."""
     if not section.dest_lists or len(section.dst_cols) != 1:
         return  # multi-column sections need the two-stage flow; see cli notes
-    client = client or anthropic.Anthropic()
+    client = client or backend.make_client()
     candidates = section.dest_lists[0]
     pending = section.unmatched
     for start in range(0, len(pending), BATCH):
         batch = pending[start:start + BATCH]
         sources = [" | ".join(v for v in r.values if v) for r in batch]
         response = client.messages.parse(
-            model=MODEL,
+            model=backend.model_id(),
             max_tokens=16000,
             system=SYSTEM,
             output_config={"format": {"type": "json_schema", "schema": _schema(candidates)}},

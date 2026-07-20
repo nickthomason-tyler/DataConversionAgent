@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import anthropic
-
+from . import backend
 from .config import ProjectContext
 from .tools import ALL_TOOLS, set_project
 
-MODEL = "claude-opus-4-8"
 MAX_TOKENS = 16000
 
 # Stable across every client and every turn — this block is cached.
@@ -51,7 +49,7 @@ def build_system(project: ProjectContext) -> list[dict]:
 
 class ConversionAgent:
     def __init__(self, project: ProjectContext):
-        self.client = anthropic.Anthropic()
+        self.client = backend.make_client()
         self.project = project
         self.system = build_system(project)
         self.history: list[dict] = []
@@ -60,7 +58,7 @@ class ConversionAgent:
     def ask(self, question: str) -> str:
         self.history.append({"role": "user", "content": question})
         runner = self.client.beta.messages.tool_runner(
-            model=MODEL,
+            model=backend.model_id(),
             max_tokens=MAX_TOKENS,
             thinking={"type": "adaptive"},
             system=self.system,
