@@ -18,7 +18,7 @@ def _parse_lookup_spec(wb) -> dict:
     return {}
 
 
-def _parse_visible_tab(ws, tab: str) -> list[Section]:
+def _parse_visible_tab(ws, tab: str, spec_counts: dict[str, tuple[int, int]]) -> list[Section]:
     rows = list(ws.iter_rows(values_only=True))
     sections: list[Section] = []
     i = 0
@@ -30,8 +30,17 @@ def _parse_visible_tab(ws, tab: str) -> list[Section]:
                 if rows[back] and rows[back][0]:
                     title = str(rows[back][0]).strip()
                     break
-            src_cols = [c + 1 for c, v in enumerate(r) if v == "Source DB"]
-            dst_cols = [c + 1 for c, v in enumerate(r) if v == "Destination DB"]
+            # Column layout is contiguous: source cols, then dest cols, then
+            # notes. Prefer the LookupSpec's column counts — merged header
+            # cells lose their duplicated labels after a round-trip through
+            # openpyxl, so counting "Source DB" cells undercounts.
+            if title in spec_counts:
+                n_src, n_dst = spec_counts[title]
+                src_cols = list(range(1, n_src + 1))
+                dst_cols = list(range(n_src + 1, n_src + n_dst + 1))
+            else:
+                src_cols = [c + 1 for c, v in enumerate(r) if v == "Source DB"]
+                dst_cols = [c + 1 for c, v in enumerate(r) if v == "Destination DB"]
             header = rows[i + 1] if i + 1 < len(rows) else ()
             notes_col = None
             for c, v in enumerate(header):
@@ -83,6 +92,11 @@ def _parse_hidden_tab(ws) -> dict[str, tuple[list[list[str]], dict[str, list[str
 def load(path: str) -> CrosswalkWorkbook:
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     model = CrosswalkWorkbook(path=path, spec=_parse_lookup_spec(wb))
+    counts_by_tab: dict[str, dict[str, tuple[int, int]]] = {}
+    for module, m in model.spec.get("modules", {}).items():
+        for section, s in m.get("typeQueries", {}).items():
+            counts_by_tab.setdefault(module, {})[section] = (
+                len(s["source"]["columns"]), len(s["destination"]["columns"]))
     hidden: dict[str, dict] = {}
     for name in wb.sheetnames:
         if name.endswith("Hidden"):
@@ -90,7 +104,7 @@ def load(path: str) -> CrosswalkWorkbook:
     for name in wb.sheetnames:
         if name.endswith("Hidden") or name == "LookupSpec":
             continue
-        for sec in _parse_visible_tab(wb[name], name):
+        for sec in _parse_visible_tab(wb[name], name, counts_by_tab.get(name, {})):
             lists = hidden.get(name, {}).get(sec.title)
             if lists:
                 sec.dest_lists, sec.cascade = lists
