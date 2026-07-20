@@ -6,9 +6,12 @@ import pytest
 import yaml
 
 from conversion_agent.agent import build_system
+from conversion_agent.core.settings import AppSettings
 from conversion_agent.core.errors import ProjectValidationError
+from conversion_agent.guidance.tools import build_tools
 from conversion_agent.projects.filesystem import FilesystemProjectRepository
-from conversion_agent.tools import get_mapping_status, get_profile_summary, set_project
+from conversion_agent.resources.catalog import ResourceCatalog
+from conversion_agent.resources.knowledge import KnowledgeIndex
 
 
 MAPPING_HEADERS = [
@@ -33,16 +36,26 @@ def test_loads_legacy_v1_project_as_immutable_context(project_root) -> None:
 
 def test_loaded_context_supports_current_agent_and_mapping_tool_consumers(project_root) -> None:
     context = FilesystemProjectRepository(project_root).load("alpha")
+    catalog = ResourceCatalog()
+    tools = build_tools(
+        context,
+        KnowledgeIndex.for_project(catalog.shared_knowledge(), context),
+        catalog.dictionary(),
+        AppSettings(projects_root=project_root),
+    )
 
     assert context.name == "alpha"
     assert context.project["client_name"] == "Alpha City"
     assert "Alpha City" in build_system(context)[1]["text"]
 
-    set_project(context)
-    result = json.loads(get_mapping_status.func(status_filter="draft"))
+    result = json.loads(tools.call("get_mapping_status", {"status_filter": "draft"}))
     assert result == {
-        "client": "alpha",
+        "client": "Alpha City",
         "status_counts": {"draft": 1},
+        "offset": 0,
+        "returned": 1,
+        "total": 1,
+        "truncated": False,
         "rows": [
             {
                 "source_table": "PERMITS",
@@ -74,9 +87,15 @@ def test_loaded_context_serializes_frozen_profile_through_current_tool(project_r
         encoding="utf-8",
     )
     context = FilesystemProjectRepository(project_root).load("alpha")
-    set_project(context)
+    catalog = ResourceCatalog()
+    tools = build_tools(
+        context,
+        KnowledgeIndex.for_project(catalog.shared_knowledge(), context),
+        catalog.dictionary(),
+        AppSettings(projects_root=project_root),
+    )
 
-    assert json.loads(get_profile_summary.func()) == {
+    assert json.loads(tools.call("get_profile_summary", {})) == {
         "entities": {
             "permits": {
                 "row_count": 10,
@@ -85,7 +104,7 @@ def test_loaded_context_serializes_frozen_profile_through_current_tool(project_r
             }
         }
     }
-    assert json.loads(get_profile_summary.func(entity="permits")) == {
+    assert json.loads(tools.call("get_profile_summary", {"entity": "permits"})) == {
         "permits": {
             "row_count": 10,
             "notes": ["legacy values", "validated"],
