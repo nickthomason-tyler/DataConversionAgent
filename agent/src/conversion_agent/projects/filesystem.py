@@ -48,14 +48,13 @@ class FilesystemProjectRepository:
         metadata = self._load_metadata(project_file)
         rows = self._load_mapping(project_dir / "mapping_workbook.csv")
         profile = self._load_profile(project_dir / "profile_summary.json")
-        knowledge_dir = project_dir / "knowledge"
         return ProjectContext(
             project_id=project_id,
             root=project_dir,
             metadata=metadata,
             mapping_rows=rows,
             profile_summary=freeze_json(profile),
-            knowledge_dir=knowledge_dir if knowledge_dir.is_dir() else None,
+            knowledge_dir=self._resolve_knowledge_dir(project_dir),
         )
 
     @staticmethod
@@ -95,9 +94,22 @@ class FilesystemProjectRepository:
                 reader = csv.DictReader(handle)
                 if tuple(reader.fieldnames or ()) != MAPPING_FIELDS:
                     raise ProjectValidationError(f"Invalid mapping headers in {path}")
-                return tuple(
-                    MappingRow(**{name: row[name] for name in MAPPING_FIELDS}) for row in reader
-                )
+                rows: list[MappingRow] = []
+                for line_number, row in enumerate(reader, start=2):
+                    if None in row:
+                        raise ProjectValidationError(
+                            f"Invalid mapping row {line_number} in {path}: too many values"
+                        )
+                    values: dict[str, str] = {}
+                    for name in MAPPING_FIELDS:
+                        value = row.get(name)
+                        if not isinstance(value, str) or not value.strip():
+                            raise ProjectValidationError(
+                                f"Invalid mapping row {line_number} in {path}: {name} is required"
+                            )
+                        values[name] = value
+                    rows.append(MappingRow(**values))
+                return tuple(rows)
         except (OSError, UnicodeDecodeError, csv.Error, KeyError, TypeError) as exc:
             raise ProjectValidationError(f"Invalid mapping workbook {path}: {exc}") from exc
 
@@ -114,6 +126,25 @@ class FilesystemProjectRepository:
                 f"Profile must be an object with object-valued entities: {path}"
             )
         return value
+
+    @staticmethod
+    def _resolve_knowledge_dir(project_dir: Path) -> Path | None:
+        knowledge_dir = project_dir / "knowledge"
+        if not knowledge_dir.exists():
+            return None
+        try:
+            resolved = knowledge_dir.resolve(strict=True)
+        except OSError as exc:
+            raise ProjectValidationError(f"Invalid knowledge directory {knowledge_dir}: {exc}") from exc
+        try:
+            resolved.relative_to(project_dir)
+        except ValueError as exc:
+            raise ProjectValidationError(
+                f"Knowledge directory escapes project directory: {knowledge_dir}"
+            ) from exc
+        if not resolved.is_dir():
+            return None
+        return resolved
 
 
 def _required_text(value: str, field: str, path: Path) -> str:

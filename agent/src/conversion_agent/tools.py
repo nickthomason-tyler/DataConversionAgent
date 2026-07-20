@@ -13,6 +13,7 @@ from anthropic import beta_tool
 
 from . import knowledge
 from .config import ProjectContext, load_dictionary
+from .projects.models import to_json_compatible
 
 _project: ProjectContext | None = None
 
@@ -127,8 +128,8 @@ def get_profile_summary(entity: str = "") -> str:
         match = entities.get(entity.lower())
         if match is None:
             return f"No profile for entity '{entity}'. Known: {sorted(entities)}"
-        return json.dumps({entity.lower(): match}, indent=2)
-    return json.dumps(profile, indent=2)
+        return json.dumps({entity.lower(): to_json_compatible(match)}, indent=2)
+    return json.dumps(to_json_compatible(profile), indent=2)
 
 
 ALL_TOOLS = [search_knowledge_base, lookup_dct_field, get_mapping_status, get_profile_summary]

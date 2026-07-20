@@ -1,4 +1,5 @@
 import json
+import csv
 from pathlib import Path
 
 import pytest
@@ -7,7 +8,18 @@ import yaml
 from conversion_agent.agent import build_system
 from conversion_agent.core.errors import ProjectValidationError
 from conversion_agent.projects.filesystem import FilesystemProjectRepository
-from conversion_agent.tools import get_mapping_status, set_project
+from conversion_agent.tools import get_mapping_status, get_profile_summary, set_project
+
+
+MAPPING_HEADERS = [
+    "source_table",
+    "source_column",
+    "target_table",
+    "target_column",
+    "rule",
+    "status",
+    "owner",
+]
 
 
 def test_loads_legacy_v1_project_as_immutable_context(project_root) -> None:
@@ -45,6 +57,43 @@ def test_loaded_context_supports_current_agent_and_mapping_tool_consumers(projec
     }
 
 
+def test_loaded_context_serializes_frozen_profile_through_current_tool(project_root) -> None:
+    profile_file = project_root / "alpha" / "profile_summary.json"
+    profile_file.write_text(
+        json.dumps(
+            {
+                "entities": {
+                    "permits": {
+                        "row_count": 10,
+                        "notes": ["legacy values", "validated"],
+                        "metrics": {"null_rate": 0.1},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    context = FilesystemProjectRepository(project_root).load("alpha")
+    set_project(context)
+
+    assert json.loads(get_profile_summary.func()) == {
+        "entities": {
+            "permits": {
+                "row_count": 10,
+                "notes": ["legacy values", "validated"],
+                "metrics": {"null_rate": 0.1},
+            }
+        }
+    }
+    assert json.loads(get_profile_summary.func(entity="permits")) == {
+        "permits": {
+            "row_count": 10,
+            "notes": ["legacy values", "validated"],
+            "metrics": {"null_rate": 0.1},
+        }
+    }
+
+
 @pytest.mark.parametrize("project_id", ["../alpha", "/tmp/alpha", ".alpha", "a/b", ""])
 def test_rejects_unsafe_project_identifiers(project_root, project_id) -> None:
     with pytest.raises(ProjectValidationError):
@@ -75,4 +124,59 @@ def test_rejects_non_utf8_project_artifacts(project_root: Path, artifact: str) -
     (project_root / "alpha" / artifact).write_bytes(b"\xff")
 
     with pytest.raises(ProjectValidationError):
+        FilesystemProjectRepository(project_root).load("alpha")
+
+
+@pytest.mark.parametrize(
+    ("headers", "row"),
+    [
+        (MAPPING_HEADERS, ["PERMITS", "TYPE", "permit", "permit_type", "crosswalk", "draft"]),
+        (
+            MAPPING_HEADERS,
+            [
+                "PERMITS",
+                "TYPE",
+                "permit",
+                "permit_type",
+                "crosswalk",
+                "draft",
+                "analyst",
+                "extra value",
+            ],
+        ),
+        (MAPPING_HEADERS, ["PERMITS", "", "permit", "permit_type", "crosswalk", "draft", "analyst"]),
+        (MAPPING_HEADERS[:-1], ["PERMITS", "TYPE", "permit", "permit_type", "crosswalk", "draft"]),
+    ],
+    ids=["short-row-none", "extra-cell", "blank-required-value", "header-width-mismatch"],
+)
+def test_rejects_malformed_mapping_rows(project_root: Path, headers, row) -> None:
+    mapping_file = project_root / "alpha" / "mapping_workbook.csv"
+    with mapping_file.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(headers)
+        writer.writerow(row)
+
+    with pytest.raises(ProjectValidationError):
+        FilesystemProjectRepository(project_root).load("alpha")
+
+
+def test_resolves_knowledge_directory_within_project(project_root: Path) -> None:
+    knowledge_dir = project_root / "alpha" / "knowledge"
+    knowledge_dir.mkdir()
+
+    context = FilesystemProjectRepository(project_root).load("alpha")
+
+    assert context.knowledge_dir == knowledge_dir.resolve()
+
+
+def test_rejects_knowledge_directory_symlink_that_escapes_project(project_root: Path) -> None:
+    outside_dir = project_root.parent / "outside-knowledge"
+    outside_dir.mkdir()
+    knowledge_dir = project_root / "alpha" / "knowledge"
+    try:
+        knowledge_dir.symlink_to(outside_dir, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks are unavailable: {exc}")
+
+    with pytest.raises(ProjectValidationError, match="knowledge"):
         FilesystemProjectRepository(project_root).load("alpha")

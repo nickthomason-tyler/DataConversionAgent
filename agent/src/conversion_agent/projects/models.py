@@ -76,3 +76,12 @@ def freeze_json(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return tuple(freeze_json(item) for item in value)
     return value
+
+
+def to_json_compatible(value: Any) -> Any:
+    """Return a mutable JSON-compatible copy without changing frozen source data."""
+    if isinstance(value, Mapping):
+        return {str(key): to_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [to_json_compatible(item) for item in value]
+    return value
