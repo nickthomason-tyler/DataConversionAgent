@@ -1,0 +1,112 @@
+"""Validated filesystem-backed project repository."""
+
+from __future__ import annotations
+
+import csv
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from conversion_agent.core.errors import ProjectError, ProjectValidationError
+
+from .models import MappingRow, ProjectContext, ProjectMetadata, freeze_json
+
+PROJECT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+MAPPING_FIELDS = tuple(MappingRow.__dataclass_fields__)
+
+
+class _ProjectDocument(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: int = Field(default=1, ge=1)
+    client_name: str = Field(min_length=1)
+    source_system: str = Field(min_length=1)
+    phase: str = Field(min_length=1)
+    in_scope_entities: list[str] = Field(min_length=1)
+    conversion_lead: str | None = None
+    client_data_steward: str | None = None
+
+
+class FilesystemProjectRepository:
+    def __init__(self, root: Path | str):
+        self.root = Path(root).expanduser().resolve()
+
+    def load(self, project_id: str) -> ProjectContext:
+        if not isinstance(project_id, str) or not PROJECT_ID.fullmatch(project_id):
+            raise ProjectValidationError(f"Unsafe project identifier: {project_id!r}")
+        project_dir = (self.root / project_id).resolve()
+        if project_dir.parent != self.root:
+            raise ProjectValidationError("Project path escapes the configured projects root.")
+
+        project_file = project_dir / "project.yaml"
+        if not project_file.is_file():
+            raise ProjectError(f"Missing project file: {project_file}")
+        metadata = self._load_metadata(project_file)
+        rows = self._load_mapping(project_dir / "mapping_workbook.csv")
+        profile = self._load_profile(project_dir / "profile_summary.json")
+        knowledge_dir = project_dir / "knowledge"
+        return ProjectContext(
+            project_id=project_id,
+            root=project_dir,
+            metadata=metadata,
+            mapping_rows=rows,
+            profile_summary=freeze_json(profile),
+            knowledge_dir=knowledge_dir if knowledge_dir.is_dir() else None,
+        )
+
+    @staticmethod
+    def _load_metadata(path: Path) -> ProjectMetadata:
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            doc = _ProjectDocument.model_validate(raw)
+        except (OSError, yaml.YAMLError, ValidationError) as exc:
+            raise ProjectValidationError(f"Invalid {path}: {exc}") from exc
+
+        in_scope_entities = tuple(
+            dict.fromkeys(entity.strip() for entity in doc.in_scope_entities if entity.strip())
+        )
+        if not in_scope_entities:
+            raise ProjectValidationError(f"Invalid {path}: in_scope_entities cannot be empty")
+        return ProjectMetadata(
+            schema_version=doc.schema_version,
+            client_name=doc.client_name.strip(),
+            source_system=doc.source_system.strip(),
+            phase=doc.phase.strip(),
+            in_scope_entities=in_scope_entities,
+            conversion_lead=doc.conversion_lead,
+            client_data_steward=doc.client_data_steward,
+            extras=freeze_json(doc.model_extra or {}),
+        )
+
+    @staticmethod
+    def _load_mapping(path: Path) -> tuple[MappingRow, ...]:
+        if not path.exists():
+            return ()
+        try:
+            with path.open(encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                if tuple(reader.fieldnames or ()) != MAPPING_FIELDS:
+                    raise ProjectValidationError(f"Invalid mapping headers in {path}")
+                return tuple(
+                    MappingRow(**{name: row[name] for name in MAPPING_FIELDS}) for row in reader
+                )
+        except (OSError, csv.Error, KeyError, TypeError) as exc:
+            raise ProjectValidationError(f"Invalid mapping workbook {path}: {exc}") from exc
+
+    @staticmethod
+    def _load_profile(path: Path) -> dict[str, Any]:
+        if not path.exists():
+            return {}
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ProjectValidationError(f"Invalid profile summary {path}: {exc}") from exc
+        if not isinstance(value, dict) or not isinstance(value.get("entities", {}), dict):
+            raise ProjectValidationError(
+                f"Profile must be an object with object-valued entities: {path}"
+            )
+        return value
