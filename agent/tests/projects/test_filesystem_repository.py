@@ -48,30 +48,32 @@ def test_loaded_context_supports_current_agent_and_mapping_tool_consumers(projec
     assert context.project["client_name"] == "Alpha City"
     assert "Alpha City" in build_system(context)[1]["text"]
 
-    result = json.loads(tools.call("get_mapping_status", {"status_filter": "draft"}))
-    assert result == {
-        "client": "Alpha City",
-        "status_counts": {"draft": 1},
-        "offset": 0,
-        "returned": 1,
-        "total": 1,
-        "truncated": False,
+    payload = json.loads(tools.call("get_mapping_status", {"status_filter": "draft"}))
+    assert payload == {
+        "result": {
+            "client": "Alpha City",
+            "status_counts": {"draft": 1},
+            "offset": 0,
+            "returned": 1,
+            "total": 1,
+            "truncated": False,
+            "rows": [
+                {
+                    "source_table": "PERMITS",
+                    "source_column": "TYPE",
+                    "target_table": "permit",
+                    "target_column": "permit_type",
+                    "rule": "crosswalk",
+                    "status": "draft",
+                    "owner": "analyst",
+                }
+            ],
+        },
         "truncation": {
             "rows": False,
             "characters": False,
             "character_limit": 50_000,
         },
-        "rows": [
-            {
-                "source_table": "PERMITS",
-                "source_column": "TYPE",
-                "target_table": "permit",
-                "target_column": "permit_type",
-                "rule": "crosswalk",
-                "status": "draft",
-                "owner": "analyst",
-            }
-        ],
     }
 
 
@@ -101,12 +103,14 @@ def test_loaded_context_serializes_frozen_profile_through_current_tool(project_r
     )
 
     assert json.loads(tools.call("get_profile_summary", {})) == {
-        "entities": {
-            "permits": {
-                "row_count": 10,
-                "notes": ["legacy values", "validated"],
-                "metrics": {"null_rate": 0.1},
-            }
+        "result": {
+            "entities": {
+                "permits": {
+                    "row_count": 10,
+                    "notes": ["legacy values", "validated"],
+                    "metrics": {"null_rate": 0.1},
+                }
+            },
         },
         "truncation": {
             "rows": False,
@@ -115,10 +119,12 @@ def test_loaded_context_serializes_frozen_profile_through_current_tool(project_r
         },
     }
     assert json.loads(tools.call("get_profile_summary", {"entity": "permits"})) == {
-        "permits": {
-            "row_count": 10,
-            "notes": ["legacy values", "validated"],
-            "metrics": {"null_rate": 0.1},
+        "result": {
+            "permits": {
+                "row_count": 10,
+                "notes": ["legacy values", "validated"],
+                "metrics": {"null_rate": 0.1},
+            },
         },
         "truncation": {
             "rows": False,

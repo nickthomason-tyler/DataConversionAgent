@@ -25,14 +25,13 @@ def _bounded_json(
 ) -> str:
     """Serialize valid JSON with explicit truncation metadata within ``limit``."""
     compatible = to_json_compatible(value)
-    if isinstance(compatible, dict):
-        payload = dict(compatible)
-    else:
-        payload = {"result": compatible}
-    payload["truncation"] = {
-        "rows": rows_truncated,
-        "characters": characters_truncated,
-        "character_limit": limit,
+    payload = {
+        "result": compatible,
+        "truncation": {
+            "rows": rows_truncated,
+            "characters": characters_truncated,
+            "character_limit": limit,
+        },
     }
     rendered = _compact_json(payload)
     if len(rendered) <= limit:
@@ -43,14 +42,20 @@ def _bounded_json(
         "characters": True,
         "character_limit": limit,
     }
-    original = _compact_json(compatible)
+    original = compatible if isinstance(compatible, str) else _compact_json(compatible)
     marker = "...[TRUNCATED]"
     low = 0
     high = len(original)
-    best = _compact_json({"preview": marker, "truncation": metadata})
+    preview: object = marker if isinstance(compatible, str) else {"preview": marker}
+    best = _compact_json({"result": preview, "truncation": metadata})
     while low <= high:
         middle = (low + high) // 2
-        candidate = _compact_json({"preview": original[:middle] + marker, "truncation": metadata})
+        preview = (
+            original[:middle] + marker
+            if isinstance(compatible, str)
+            else {"preview": original[:middle] + marker}
+        )
+        candidate = _compact_json({"result": preview, "truncation": metadata})
         if len(candidate) <= limit:
             best = candidate
             low = middle + 1
@@ -58,15 +63,15 @@ def _bounded_json(
             high = middle - 1
     if len(best) <= limit:
         return best
-    minimal = _compact_json({"truncation": metadata})
+    minimal = _compact_json({"result": None, "truncation": metadata})
     if len(minimal) <= limit:
         return minimal
-    fallback = _compact_json({"truncated": True})
-    if len(fallback) <= limit:
-        return fallback
-    if limit >= 4:
-        return "null"
-    return "{}" if limit >= 2 else "0"
+    return _compact_json(
+        {
+            "result": None,
+            "truncation": {"rows": rows_truncated, "characters": True},
+        }
+    )
 
 
 def _bounded_knowledge(hits: list[Any], limit: int) -> str:
@@ -154,7 +159,8 @@ def build_tools(
                     rows_truncated=True,
                     characters_truncated=True,
                 )
-                if "preview" not in json.loads(rendered):
+                result = json.loads(rendered)["result"]
+                if not isinstance(result, dict) or "preview" not in result:
                     break
         return rendered
 
@@ -167,19 +173,20 @@ def build_tools(
                 for name, entry in tables.items()
                 if entry.get("module") == module.strip().lower()
             }
-            value: dict[str, Any] = {"module": module, "tables": hits}
+            value: object = {"module": module, "tables": hits}
         else:
             key = table.strip().lower()
             entry = tables.get(key)
             if entry is None:
                 near = [name for name in tables if key and key in name]
-                return f"Table '{table}' not in dictionary. Close matches: {near[:15]}"
-            if column:
+                value = f"Table '{table}' not in dictionary. Close matches: {near[:15]}"
+            elif column:
                 col_key = column.strip().lower()
                 col = entry.get("columns", {}).get(col_key)
                 if col is None:
-                    return f"Column '{column}' not in {key}."
-                value = {"table": key, "column": col_key, **col}
+                    value = f"Column '{column}' not in {key}."
+                else:
+                    value = {"table": key, "column": col_key, **col}
             else:
                 value = {"table": key, **entry}
         return _bounded_json(value, limit=settings.max_tool_chars)
@@ -188,14 +195,17 @@ def build_tools(
         """Return profiling results for the active project, optionally one entity."""
         profile = project.profile_summary
         if not profile:
-            return "No profiling summary loaded for this client yet."
-        if entity:
+            value: object = "No profiling summary loaded for this client yet."
+        elif entity:
             entities = profile.get("entities", {})
             match = entities.get(entity.lower())
             if match is None:
-                return f"No profile for entity '{entity}'. Known: {sorted(entities)}"
-            profile = {entity.lower(): match}
-        return _bounded_json(profile, limit=settings.max_tool_chars)
+                value = f"No profile for entity '{entity}'. Known: {sorted(entities)}"
+            else:
+                value = {entity.lower(): match}
+        else:
+            value = profile
+        return _bounded_json(value, limit=settings.max_tool_chars)
 
     handlers: dict[str, Callable[..., str]] = {
         "search_knowledge_base": search_knowledge_base,
