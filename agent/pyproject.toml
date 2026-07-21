@@ -5,7 +5,25 @@ description = "EPL data conversion guidance agent (Phase 1: internal Q&A)"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.92.0",
+    "pydantic>=2.8,<3",
     "pyyaml>=6.0",
+    "openpyxl>=3.1,<4",
+    "lxml>=5,<7",
+]
+
+[project.scripts]
+conversion-agent = "conversion_agent.cli.guidance:main"
+conversion-map = "conversion_agent.cli.mapping:main"
+conversion-apply = "conversion_agent.cli.apply:main"
+
+[project.optional-dependencies]
+dct-build = ["python-docx>=1.1,<2"]
+dev = [
+    "build>=1.2,<2",
+    "mypy>=1.10,<2",
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
+    "setuptools>=68",
 ]
 
 [build-system]
@@ -14,3 +32,24 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"conversion_agent.resources" = [
+    "data/dct/*.yaml",
+    "data/knowledge/**/*.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: requires a configured Anthropic or Bedrock backend"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["conversion_agent"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+check_untyped_defs = true

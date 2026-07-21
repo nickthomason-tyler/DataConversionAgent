@@ -3,3 +3,11 @@ __pycache__/
 *.egg-info/
 agent/evals/results.md
 .env
+.worktrees/
+.DS_Store
+.superpowers/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/

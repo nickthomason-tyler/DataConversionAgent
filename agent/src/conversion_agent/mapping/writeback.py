@@ -16,12 +16,16 @@ reason, values are still written and only the coloring is skipped.
 
 from __future__ import annotations
 
-import shutil
+import os
+import tempfile
 import zipfile
+from pathlib import Path
 
 from lxml import etree
 
-from .model import CrosswalkWorkbook
+from conversion_agent.core.errors import OutputError
+
+from .model import CellEdit, CrosswalkWorkbook, WriteReport
 
 NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -52,12 +56,15 @@ def _cell_ref_col(ref: str) -> int:
 def _sheet_paths(zf: zipfile.ZipFile) -> dict[str, str]:
     wb = etree.fromstring(zf.read("xl/workbook.xml"))
     rels = etree.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
-    target_by_id = {r.get("Id"): r.get("Target")
-                    for r in rels.findall(f"{{{NS_PKGREL}}}Relationship")}
+    target_by_id = {
+        r.get("Id"): r.get("Target") for r in rels.findall(f"{{{NS_PKGREL}}}Relationship")
+    }
     out = {}
     for sheet in wb.findall(f"{{{NS_MAIN}}}sheets/{{{NS_MAIN}}}sheet"):
         target = target_by_id[sheet.get(f"{{{NS_REL}}}id")]
-        if not target.startswith("xl/"):
+        if target.startswith("/"):
+            target = target.lstrip("/")
+        elif not target.startswith("xl/"):
             target = "xl/" + target.lstrip("/")
         out[sheet.get("name")] = target
     return out
@@ -72,12 +79,12 @@ class _StyleCloner:
         self.cellxfs = self.root.find(f"{{{NS_MAIN}}}cellXfs")
         self.fill_ids: dict[str, int] = {}
         self.xf_cache: dict[tuple[str, str], int] = {}
+        self.changed = False
 
     def _fill_id(self, kind: str) -> int:
         if kind not in self.fill_ids:
             fill = etree.SubElement(self.fills, f"{{{NS_MAIN}}}fill")
-            pf = etree.SubElement(fill, f"{{{NS_MAIN}}}patternFill",
-                                  patternType="solid")
+            pf = etree.SubElement(fill, f"{{{NS_MAIN}}}patternFill", patternType="solid")
             etree.SubElement(pf, f"{{{NS_MAIN}}}fgColor", rgb=FILL_RGB[kind])
             etree.SubElement(pf, f"{{{NS_MAIN}}}bgColor", indexed="64")
             self.fill_ids[kind] = len(self.fills) - 1
@@ -95,11 +102,19 @@ class _StyleCloner:
             self.cellxfs.append(clone)
             self.cellxfs.set("count", str(len(self.cellxfs)))
             self.xf_cache[key] = len(self.cellxfs) - 1
+            self.changed = True
         return str(self.xf_cache[key])
 
 
-def _set_cell(sheet_root, row_idx: int, col_idx: int, text: str,
-              cloner: _StyleCloner | None, kind: str) -> None:
+def _set_cell(
+    sheet_root,
+    row_idx: int,
+    col_idx: int,
+    text: str,
+    cloner: _StyleCloner | None,
+    kind: str,
+    warnings: list[str],
+) -> None:
     sheet_data = sheet_root.find(f"{{{NS_MAIN}}}sheetData")
     row = None
     for r in sheet_data.findall(f"{{{NS_MAIN}}}row"):
@@ -132,56 +147,221 @@ def _set_cell(sheet_root, row_idx: int, col_idx: int, text: str,
     if cloner is not None:
         try:
             cell.set("s", cloner.styled(cell.get("s", "0"), kind))
-        except Exception:
-            pass  # keep the value; lose only the color
+        except Exception as exc:
+            warnings.append(f"Style not applied to {ref}: {type(exc).__name__}: {exc}")
 
 
-def write(model: CrosswalkWorkbook, out_path: str, overwrite: bool = False) -> dict:
-    # overwrite=True deliberately replaces previously written proposal values
-    # and notes (revision runs); human review still happens on the output.
-    written = {"auto": 0, "llm": 0}
-    edits_by_sheet: dict[str, list[tuple[int, int, str, str]]] = {}
+def _existing_cell_text(sheet_root, ref: str) -> str:
+    """Return a cell's stored text without normalizing human-entered spaces."""
+    for cell in sheet_root.findall(f".//{{{NS_MAIN}}}c"):
+        if cell.get("r") == ref:
+            return "".join(cell.itertext())
+    return ""
+
+
+def _cell_is_occupied(sheet_root, ref: str) -> bool:
+    """Treat any stored destination value, formula, or whitespace as occupied."""
+    for cell in sheet_root.findall(f".//{{{NS_MAIN}}}c"):
+        if cell.get("r") != ref:
+            continue
+        return any(cell.find(f"{{{NS_MAIN}}}{tag}") is not None for tag in ("f", "v", "is"))
+    return False
+
+
+def _write_package(
+    model: CrosswalkWorkbook, out_path: Path, *, overwrite: bool
+) -> tuple[WriteReport, tuple[CellEdit, ...], bool]:
+    """Create a surgically edited package at ``out_path`` for later verification."""
+    edits_by_sheet: dict[str, list[tuple[int, int, str, str, bool]]] = {}
+    pending_notes: dict[str, list[tuple[int, int, str, str, bool]]] = {}
     for sec in model.sections:
         for row_idx, prop in sec.proposals.items():
             kind = "llm" if prop.method == "llm" else "auto"
-            row = next(r for r in sec.rows if r.row_idx == row_idx)
-            for col, value, existing in zip(sec.dst_cols, prop.dest, row.existing):
-                if not value or (existing.strip() and not overwrite):
-                    continue  # skip empty dests; overwrite only on revision runs
-                edits_by_sheet.setdefault(sec.tab, []).append((row_idx, col, value, kind))
+            for col, value in zip(sec.dst_cols, prop.dest):
+                if not value:
+                    continue  # no-good-match proposals have no destination edit
+                edits_by_sheet.setdefault(sec.tab, []).append((row_idx, col, value, kind, False))
             if sec.notes_col and prop.note:
-                edits_by_sheet.setdefault(sec.tab, []).append(
-                    (row_idx, sec.notes_col, prop.note, kind))
-            # (notes for overwritten rows are replaced below via overwrite flag)
-            written[kind] += 1
+                pending_notes.setdefault(sec.tab, []).append(
+                    (row_idx, sec.notes_col, prop.note, kind, True)
+                )
 
-    src_zip = zipfile.ZipFile(model.path)
-    paths = _sheet_paths(src_zip)
-    sheet_docs = {}
-    for tab, edits in edits_by_sheet.items():
-        sheet_docs[paths[tab]] = (tab, edits)
+    warnings: list[str] = []
+    with zipfile.ZipFile(model.path) as source_zip:
+        paths = _sheet_paths(source_zip)
+        try:
+            cloner = _StyleCloner(source_zip.read("xl/styles.xml"))
+        except Exception as exc:
+            cloner = None
+            warnings.append(f"Style cloning disabled: {type(exc).__name__}: {exc}")
 
+        replacements: dict[str, bytes] = {}
+        expected_edits: list[CellEdit] = []
+        destination_cells = 0
+        note_cells = 0
+        written_rows: set[tuple[str, int, str]] = set()
+        tabs = tuple(dict.fromkeys((*edits_by_sheet, *pending_notes)))
+        sheet_roots = {tab: etree.fromstring(source_zip.read(paths[tab])) for tab in tabs}
+        if not overwrite:
+            conflicts = [
+                f"{tab}!{_col_letter(col)}{row_idx}"
+                for tab, edits in edits_by_sheet.items()
+                for row_idx, col, _value, _kind, _is_note in edits
+                if _cell_is_occupied(sheet_roots[tab], f"{_col_letter(col)}{row_idx}")
+            ]
+            if conflicts:
+                raise OutputError(
+                    "Write conflict: current source workbook destination cells are occupied: "
+                    + ", ".join(conflicts)
+                )
+
+        for tab in tabs:
+            path = paths[tab]
+            root = sheet_roots[tab]
+            edits = list(edits_by_sheet.get(tab, ()))
+            for note in pending_notes.get(tab, ()):
+                row_idx, col, _, _, _ = note
+                ref = f"{_col_letter(col)}{row_idx}"
+                if overwrite or not _existing_cell_text(root, ref):
+                    edits.append(note)
+            edited = False
+            for row_idx, col, value, kind, is_note in edits:
+                ref = f"{_col_letter(col)}{row_idx}"
+                _set_cell(root, row_idx, col, value, cloner, kind, warnings)
+                edited = True
+                expected_edits.append(CellEdit(path, ref, value))
+                written_rows.add((tab, row_idx, kind))
+                if is_note:
+                    note_cells += 1
+                else:
+                    destination_cells += 1
+            if edited:
+                replacements[path] = etree.tostring(
+                    root, xml_declaration=True, encoding="UTF-8", standalone=True
+                )
+        if cloner is not None and cloner.changed:
+            replacements["xl/styles.xml"] = etree.tostring(
+                cloner.root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+
+        with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as output_zip:
+            for item in source_zip.infolist():
+                output_zip.writestr(
+                    item, replacements.get(item.filename) or source_zip.read(item.filename)
+                )
+
+    deterministic_rows = sum(kind != "llm" for _, _, kind in written_rows)
+    model_rows = sum(kind == "llm" for _, _, kind in written_rows)
+    return (
+        WriteReport(
+            deterministic_rows=deterministic_rows,
+            model_rows=model_rows,
+            destination_cells=destination_cells,
+            note_cells=note_cells,
+            warnings=tuple(warnings),
+        ),
+        tuple(expected_edits),
+        cloner is not None and cloner.changed,
+    )
+
+
+def verify_output(
+    source: Path,
+    output: Path,
+    expected_edits: tuple[CellEdit, ...],
+    *,
+    styles_changed: bool = False,
+) -> None:
+    """Confirm that only intended worksheet values changed before publication."""
+    with zipfile.ZipFile(source) as source_zip, zipfile.ZipFile(output) as output_zip:
+        required = {"xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/styles.xml"}
+        if not required <= set(output_zip.namelist()):
+            raise OutputError("Output is missing required workbook package parts.")
+        source_members = set(source_zip.namelist())
+        output_members = set(output_zip.namelist())
+        if source_members != output_members:
+            raise OutputError("Output package members do not match the input workbook.")
+        for name in ("xl/workbook.xml", "xl/_rels/workbook.xml.rels"):
+            if source_zip.read(name) != output_zip.read(name):
+                raise OutputError(f"Protected workbook part changed unexpectedly: {name}")
+
+        output_workbook = etree.fromstring(output_zip.read("xl/workbook.xml"))
+        sheets = output_workbook.findall(f"{{{NS_MAIN}}}sheets/{{{NS_MAIN}}}sheet")
+        sheet_names = {sheet.get("name") for sheet in sheets}
+        if "LookupSpec" not in sheet_names:
+            raise OutputError("Output is missing the LookupSpec worksheet.")
+        hidden_sheets = [
+            sheet for sheet in sheets if sheet.get("state") in {"hidden", "veryHidden"}
+        ]
+        if not hidden_sheets:
+            raise OutputError("Output is missing a required hidden worksheet.")
+        output_paths = _sheet_paths(output_zip)
+        required_sheet_names = ["LookupSpec", *(sheet.get("name") for sheet in hidden_sheets)]
+        if any(output_paths.get(name) not in output_members for name in required_sheet_names):
+            raise OutputError("Output is missing a required workbook worksheet part.")
+
+        edits_by_sheet: dict[str, list[CellEdit]] = {}
+        for edit in expected_edits:
+            edits_by_sheet.setdefault(edit.sheet_path, []).append(edit)
+        allowed_changes = set(edits_by_sheet)
+        if styles_changed:
+            allowed_changes.add("xl/styles.xml")
+        for name in source_members - allowed_changes:
+            if source_zip.read(name) != output_zip.read(name):
+                raise OutputError(f"Untouched workbook part changed unexpectedly: {name}")
+        for sheet_path, edits in edits_by_sheet.items():
+            source_root = etree.fromstring(source_zip.read(sheet_path))
+            output_root = etree.fromstring(output_zip.read(sheet_path))
+            source_ext = source_root.find(f"{{{NS_MAIN}}}extLst")
+            output_ext = output_root.find(f"{{{NS_MAIN}}}extLst")
+            source_ext_xml = b"" if source_ext is None else etree.tostring(source_ext)
+            output_ext_xml = b"" if output_ext is None else etree.tostring(output_ext)
+            if source_ext_xml != output_ext_xml:
+                raise OutputError(f"Data-validation extensions changed: {sheet_path}")
+            cells = {cell.get("r"): cell for cell in output_root.findall(f".//{{{NS_MAIN}}}c")}
+            for edit in edits:
+                cell = cells.get(edit.cell_ref)
+                inline = None if cell is None else cell.find(f"{{{NS_MAIN}}}is")
+                text_element = None if inline is None else inline.find(f"{{{NS_MAIN}}}t")
+                if (
+                    cell is None
+                    or cell.get("t") != "inlineStr"
+                    or text_element is None
+                    or text_element.get(f"{{{NS_XML}}}space") != "preserve"
+                ):
+                    raise OutputError(
+                        f"Expected {edit.sheet_path}!{edit.cell_ref} to be a preserved inline string."
+                    )
+                text = text_element.text or ""
+                if text != edit.value:
+                    raise OutputError(
+                        f"Expected {edit.sheet_path}!{edit.cell_ref}={edit.value!r}, got {text!r}"
+                    )
+
+
+def write(model: CrosswalkWorkbook, out_path: str, overwrite: bool = False) -> WriteReport:
+    # overwrite=True deliberately replaces previously written proposal values
+    # and notes (revision runs); human review still happens on the output.
+    source = Path(model.path).resolve()
+    output = Path(out_path).resolve()
+    if source == output or (output.exists() and source.samefile(output)):
+        raise OutputError("Output path must not be the input workbook.")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    os.close(fd)
+    temporary = Path(temporary_name)
     try:
-        cloner = _StyleCloner(src_zip.read("xl/styles.xml"))
-    except Exception:
-        cloner = None
-
-    # Pass 1: apply every cell edit (this may append styles to the cloner),
-    # so styles.xml is complete before anything is serialized.
-    replacements: dict[str, bytes] = {}
-    for path, (tab, edits) in sheet_docs.items():
-        root = etree.fromstring(src_zip.read(path))
-        for row_idx, col, value, kind in edits:
-            _set_cell(root, row_idx, col, value, cloner, kind)
-        replacements[path] = etree.tostring(root, xml_declaration=True,
-                                           encoding="UTF-8", standalone=True)
-    if cloner is not None:
-        replacements["xl/styles.xml"] = etree.tostring(
-            cloner.root, xml_declaration=True, encoding="UTF-8", standalone=True)
-
-    # Pass 2: write the package, copying every untouched entry byte-for-byte.
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as out:
-        for item in src_zip.infolist():
-            out.writestr(item, replacements.get(item.filename) or src_zip.read(item.filename))
-    src_zip.close()
-    return written
+        report, expected_edits, styles_changed = _write_package(
+            model, temporary, overwrite=overwrite
+        )
+        verify_output(source, temporary, expected_edits, styles_changed=styles_changed)
+        os.replace(temporary, output)
+        return report
+    except OutputError:
+        raise
+    except Exception as exc:
+        raise OutputError(f"Could not write verified workbook {output}: {exc}") from exc
+    finally:
+        temporary.unlink(missing_ok=True)

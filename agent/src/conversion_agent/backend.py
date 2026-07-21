@@ -1,30 +1,28 @@
-"""Backend selection: first-party Claude API or Amazon Bedrock.
-
-Set CONVERSION_AGENT_BACKEND=bedrock (plus AWS_REGION and standard AWS
-credentials) to run against the corporate Bedrock account; anything else
-uses the first-party API via ANTHROPIC_API_KEY or an `ant auth login`
-profile. Model IDs carry the `anthropic.` prefix on Bedrock.
-"""
+"""Compatibility helpers for the injected guidance backend factory."""
 
 from __future__ import annotations
 
 import os
 
-import anthropic
+from .core.settings import AppSettings
+from .guidance.backends import AnthropicBackendFactory
 
-BASE_MODEL = "claude-opus-4-8"
+
+def _settings() -> AppSettings:
+    return AppSettings.from_sources(
+        environ=os.environ,
+        development_root=None,
+        require_projects=False,
+    )
 
 
 def is_bedrock() -> bool:
-    return os.environ.get("CONVERSION_AGENT_BACKEND", "").lower() == "bedrock"
+    return _settings().backend == "bedrock"
 
 
 def model_id() -> str:
-    return f"anthropic.{BASE_MODEL}" if is_bedrock() else BASE_MODEL
+    return AnthropicBackendFactory(_settings()).model_id
 
 
 def make_client():
-    if is_bedrock():
-        from anthropic import AnthropicBedrockMantle
-        return AnthropicBedrockMantle(aws_region=os.environ.get("AWS_REGION", "us-east-1"))
-    return anthropic.Anthropic()
+    return AnthropicBackendFactory(_settings()).create()

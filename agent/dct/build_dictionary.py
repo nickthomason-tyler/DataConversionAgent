@@ -5,8 +5,10 @@ Usage:
         <DCT-DB_V*.docx> <version-label>
 
 Reads the datatype/values spreadsheet (authoritative table+column schema) and
-the DCT-DB Word documentation (module groupings and table descriptions), and
-writes dictionary.yaml next to this script. Re-run per DCT release.
+the DCT-DB Word documentation (module groupings and table descriptions), then
+writes the canonical packaged dictionary resource at
+``src/conversion_agent/resources/data/dct/dictionary.yaml``. Re-run per DCT
+release and review the generated resource before committing it.
 """
 
 from __future__ import annotations
@@ -85,7 +87,7 @@ def read_docs(docx_path: Path, table_names: set[str]) -> tuple[dict, dict, dict]
         lowered = text.lower()
         for name in names_sorted:
             if lowered.startswith(name):
-                rest = text[len(name):].lstrip(" :o-–").strip()
+                rest = text[len(name) :].lstrip(" :o-–").strip()
                 module_of.setdefault(name, current)
                 if rest and name not in descriptions:
                     descriptions[name] = re.sub(r"\s+", " ", rest)[:300]
@@ -131,7 +133,10 @@ def main() -> None:
         "column_count": sum(len(t["columns"]) for t in tables.values()),
         "tables": tables,
     }
-    dest = Path(__file__).resolve().parent / "dictionary.yaml"
+    dest = (
+        Path(__file__).resolve().parents[1]
+        / "src/conversion_agent/resources/data/dct/dictionary.yaml"
+    )
     dest.write_text(yaml.safe_dump(out, sort_keys=True, width=100))
     print(f"wrote {dest}: {out['table_count']} tables, {out['column_count']} columns")
 
