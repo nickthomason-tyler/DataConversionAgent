@@ -1,6 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from conversion_agent.core.errors import WorkbookError
 from conversion_agent.mapping import service
 from conversion_agent.mapping import llm
 from conversion_agent.mapping.llm import build_system_prompt
@@ -142,14 +145,16 @@ def test_model_run_constructs_the_legacy_backend_client_when_omitted(monkeypatch
         dest_lists=[["Allowed"]],
     )
     client = SimpleNamespace(
-        messages=SimpleNamespace(parse=lambda **kwargs: SimpleNamespace(parsed_output=None))
+        messages=SimpleNamespace(
+            parse=lambda **kwargs: SimpleNamespace(parsed_output={"mappings": [_mapping("Source")]})
+        )
     )
     monkeypatch.setattr(llm.backend, "make_client", lambda: client)
     monkeypatch.setattr(llm.backend, "model_id", lambda: "legacy-model")
 
     llm.run(section)
 
-    assert section.proposals == {}
+    assert section.proposals[2].dest == ("Allowed",)
 
 
 def test_build_report_surfaces_write_warnings() -> None:
@@ -167,3 +172,112 @@ def test_build_report_surfaces_write_warnings() -> None:
     )
 
     assert report.warnings == ("Style cloning disabled: ValueError: bad styles",)
+
+
+def _llm_section(*sources: str, candidates: list[str] | None = None) -> Section:
+    return Section(
+        tab="Permits",
+        title="Type",
+        src_cols=[1],
+        dst_cols=[2],
+        notes_col=None,
+        header_row=1,
+        rows=[
+            SourceRow(row_idx=index + 2, values=(source,), existing=("",))
+            for index, source in enumerate(sources)
+        ],
+        dest_lists=[candidates or ["Allowed", "Other"]],
+    )
+
+
+def _mapping(source: str, match: str | None = "Allowed", confidence: object = 0.9) -> dict:
+    return {
+        "source": source,
+        "match": match,
+        "confidence": confidence,
+        "rationale": "test rationale",
+    }
+
+
+@pytest.mark.parametrize(
+    "mappings",
+    [
+        [_mapping("A"), _mapping("A")],
+        [_mapping("A")],
+        [_mapping("A"), _mapping("Unknown")],
+        [_mapping("A"), _mapping("B", "Not configured")],
+        [_mapping("A"), _mapping("B", confidence=-0.1)],
+        [_mapping("A"), _mapping("B", confidence=1.1)],
+    ],
+    ids=[
+        "duplicate-source",
+        "missing-source",
+        "unknown-source",
+        "destination-outside-candidates",
+        "confidence-below-zero",
+        "confidence-above-one",
+    ],
+)
+def test_model_run_validates_the_complete_response_before_mutation(mappings: list[dict]) -> None:
+    section = _llm_section("A", "B")
+    client = SimpleNamespace(
+        messages=SimpleNamespace(
+            parse=lambda **kwargs: SimpleNamespace(parsed_output={"mappings": mappings})
+        )
+    )
+
+    with pytest.raises(WorkbookError, match="Invalid model proposal batch"):
+        llm.run(section, client)
+
+    assert section.proposals == {}
+
+
+def test_model_run_does_not_keep_an_earlier_batch_when_a_later_batch_is_invalid(
+    monkeypatch,
+) -> None:
+    section = _llm_section("A", "B")
+    responses = iter(
+        [
+            {"mappings": [_mapping("A")]},
+            {"mappings": [_mapping("Unknown")]},
+        ]
+    )
+    client = SimpleNamespace(
+        messages=SimpleNamespace(
+            parse=lambda **kwargs: SimpleNamespace(parsed_output=next(responses))
+        )
+    )
+    monkeypatch.setattr(llm, "BATCH", 1)
+
+    with pytest.raises(WorkbookError, match="Invalid model proposal batch"):
+        llm.run(section, client)
+
+    assert section.proposals == {}
+
+
+def test_model_run_rejects_duplicate_pending_source_keys_before_request() -> None:
+    section = _llm_section("Duplicate", "Duplicate")
+    client = SimpleNamespace(
+        messages=SimpleNamespace(
+            parse=lambda **kwargs: pytest.fail("ambiguous source keys must not reach the backend")
+        )
+    )
+
+    with pytest.raises(WorkbookError, match="unique pending sources"):
+        llm.run(section, client)
+
+
+def test_model_run_rejects_candidate_and_batch_limits_before_request(monkeypatch) -> None:
+    client = SimpleNamespace(
+        messages=SimpleNamespace(
+            parse=lambda **kwargs: pytest.fail("invalid limits must not reach the backend")
+        )
+    )
+    too_many_candidates = [f"Candidate {index}" for index in range(501)]
+
+    with pytest.raises(WorkbookError, match="candidate limit"):
+        llm.run(_llm_section("A", candidates=too_many_candidates), client)
+
+    monkeypatch.setattr(llm, "BATCH", 41)
+    with pytest.raises(WorkbookError, match="batch limit"):
+        llm.run(_llm_section("A"), client)

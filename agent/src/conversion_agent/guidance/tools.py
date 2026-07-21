@@ -12,6 +12,80 @@ from anthropic import beta_tool
 from conversion_agent.projects.models import ProjectContext, to_json_compatible
 
 
+def _compact_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _bounded_json(
+    value: object,
+    *,
+    limit: int,
+    rows_truncated: bool = False,
+    characters_truncated: bool = False,
+) -> str:
+    """Serialize valid JSON with explicit truncation metadata within ``limit``."""
+    compatible = to_json_compatible(value)
+    if isinstance(compatible, dict):
+        payload = dict(compatible)
+    else:
+        payload = {"result": compatible}
+    payload["truncation"] = {
+        "rows": rows_truncated,
+        "characters": characters_truncated,
+        "character_limit": limit,
+    }
+    rendered = _compact_json(payload)
+    if len(rendered) <= limit:
+        return rendered
+
+    metadata = {
+        "rows": rows_truncated,
+        "characters": True,
+        "character_limit": limit,
+    }
+    original = _compact_json(compatible)
+    marker = "...[TRUNCATED]"
+    low = 0
+    high = len(original)
+    best = _compact_json({"preview": marker, "truncation": metadata})
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = _compact_json({"preview": original[:middle] + marker, "truncation": metadata})
+        if len(candidate) <= limit:
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    if len(best) <= limit:
+        return best
+    minimal = _compact_json({"truncation": metadata})
+    if len(minimal) <= limit:
+        return minimal
+    fallback = _compact_json({"truncated": True})
+    if len(fallback) <= limit:
+        return fallback
+    if limit >= 4:
+        return "null"
+    return "{}" if limit >= 2 else "0"
+
+
+def _bounded_knowledge(hits: list[Any], limit: int) -> str:
+    blocks = [f"{hit.citation}\n{hit.text}" for hit in hits]
+    rendered = "\n\n---\n\n".join(blocks)
+    if len(rendered) <= limit:
+        return rendered
+
+    detailed_marker = f"[TRUNCATED: tool output exceeded {limit} characters]"
+    marker = detailed_marker if len(detailed_marker) <= limit else "[TRUNCATED]"
+    citation = hits[0].citation
+    fixed = f"{citation}\n\n{marker}"
+    if len(fixed) > limit:
+        return marker if len(marker) <= limit else marker[:limit]
+    text_budget = limit - len(fixed) - 1
+    preview = hits[0].text[: max(0, text_budget)]
+    return f"{citation}\n{preview}\n{marker}"
+
+
 @dataclass(frozen=True)
 class BoundToolSet:
     """Anthropic tool definitions paired with handlers closed over one project."""
@@ -36,12 +110,14 @@ def build_tools(
         hits = knowledge_index.search(query)
         if not hits:
             return "No knowledge-base results. Say you don't know and escalate."
-        return "\n\n---\n\n".join(f"{hit.citation}\n{hit.text}" for hit in hits)[
-            : settings.max_tool_chars
-        ]
+        return _bounded_knowledge(hits, settings.max_tool_chars)
 
-    def get_mapping_status(status_filter: str = "", limit: int = 100, offset: int = 0) -> str:
+    def get_mapping_status(
+        status_filter: str = "", limit: int | None = None, offset: int = 0
+    ) -> str:
         """Return a bounded page of active-project source-to-target mappings."""
+        if limit is None:
+            limit = settings.mapping_default_limit
         limit = max(1, min(limit, settings.mapping_max_limit))
         offset = max(0, offset)
         rows = [
@@ -59,7 +135,28 @@ def build_tools(
             "truncated": offset + len(page) < len(rows),
             "rows": [asdict(row) for row in page],
         }
-        return json.dumps(payload, indent=2)[: settings.max_tool_chars]
+        rendered = _bounded_json(
+            payload,
+            limit=settings.max_tool_chars,
+            rows_truncated=bool(payload["truncated"]),
+        )
+        if len(rendered) <= settings.max_tool_chars and json.loads(rendered).get(
+            "truncation", {}
+        ).get("characters"):
+            while page:
+                page.pop()
+                payload["rows"] = [asdict(row) for row in page]
+                payload["returned"] = len(page)
+                payload["truncated"] = True
+                rendered = _bounded_json(
+                    payload,
+                    limit=settings.max_tool_chars,
+                    rows_truncated=True,
+                    characters_truncated=True,
+                )
+                if "preview" not in json.loads(rendered):
+                    break
+        return rendered
 
     def lookup_dct_field(table: str = "", column: str = "", module: str = "") -> str:
         """Look up DCT table, column, or module metadata from the dictionary."""
@@ -85,7 +182,7 @@ def build_tools(
                 value = {"table": key, "column": col_key, **col}
             else:
                 value = {"table": key, **entry}
-        return json.dumps(to_json_compatible(value), indent=2)[: settings.max_tool_chars]
+        return _bounded_json(value, limit=settings.max_tool_chars)
 
     def get_profile_summary(entity: str = "") -> str:
         """Return profiling results for the active project, optionally one entity."""
@@ -98,7 +195,7 @@ def build_tools(
             if match is None:
                 return f"No profile for entity '{entity}'. Known: {sorted(entities)}"
             profile = {entity.lower(): match}
-        return json.dumps(to_json_compatible(profile), indent=2)[: settings.max_tool_chars]
+        return _bounded_json(profile, limit=settings.max_tool_chars)
 
     handlers: dict[str, Callable[..., str]] = {
         "search_knowledge_base": search_knowledge_base,

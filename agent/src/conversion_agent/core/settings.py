@@ -21,9 +21,20 @@ class AppSettings:
     backend_retries: int = 2
 
     def __post_init__(self) -> None:
+        if not isinstance(self.backend, str) or self.backend.strip().lower() not in {
+            "anthropic",
+            "bedrock",
+        }:
+            raise SettingsError("backend must be 'anthropic' or 'bedrock'")
+        if not isinstance(self.model, str) or not self.model.strip():
+            raise SettingsError("model must not be blank")
+        object.__setattr__(self, "backend", self.backend.strip().lower())
+        object.__setattr__(self, "model", self.model.strip())
+        if self.max_history_messages < 2:
+            raise SettingsError("max_history_messages must be at least 2 to retain message pairs")
+        if self.max_tool_chars < 80:
+            raise SettingsError("max_tool_chars must be at least 80 for truncation metadata")
         for name in (
-            "max_history_messages",
-            "max_tool_chars",
             "mapping_default_limit",
             "mapping_max_limit",
         ):
@@ -31,6 +42,8 @@ class AppSettings:
                 raise SettingsError(f"{name} must be greater than zero")
         if self.mapping_default_limit > self.mapping_max_limit:
             raise SettingsError("mapping_default_limit cannot exceed mapping_max_limit")
+        if self.backend_retries < 0:
+            raise SettingsError("backend_retries must be zero or greater")
 
     @classmethod
     def from_sources(
@@ -57,6 +70,7 @@ class AppSettings:
                     env.get("CONVERSION_AGENT_MAPPING_DEFAULT_LIMIT", "100")
                 ),
                 "mapping_max_limit": int(env.get("CONVERSION_AGENT_MAPPING_MAX_LIMIT", "500")),
+                "backend_retries": int(env.get("CONVERSION_AGENT_BACKEND_RETRIES", "2")),
             }
         except (TypeError, ValueError) as exc:
             raise SettingsError(f"Invalid integer setting: {exc}") from exc
@@ -64,7 +78,7 @@ class AppSettings:
             projects_root=Path(root_value).expanduser().resolve()
             if root_value is not None
             else None,
-            backend=env.get("CONVERSION_AGENT_BACKEND", "anthropic").lower(),
+            backend=env.get("CONVERSION_AGENT_BACKEND", "anthropic"),
             model=env.get("CONVERSION_AGENT_MODEL", "claude-opus-4-8"),
             **numeric,
         )

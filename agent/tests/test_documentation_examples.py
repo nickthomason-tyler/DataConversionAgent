@@ -65,6 +65,9 @@ def test_readmes_document_external_projects_and_offline_tests() -> None:
     ) in agent_readme
     assert "An installed wheel\nhas no fallback client storage" in agent_readme
     assert "[project source: <project-id>/<path> § <heading>]" in agent_readme
+    assert (
+        "Equal-scoring shared results are returned before project-overlay results." in agent_readme
+    )
     assert "conversion-agent example-client" in root_readme
     assert "agent/src/conversion_agent/resources/data/" in root_readme
 

@@ -9,6 +9,7 @@ from typing import Protocol, TypeVar
 
 import anthropic
 
+from conversion_agent.core.errors import BackendError
 from conversion_agent.core.settings import AppSettings
 
 T = TypeVar("T")
@@ -26,11 +27,18 @@ class AnthropicBackendFactory:
         self.settings = settings
 
     def create(self):
-        if self.settings.backend == "bedrock":
-            from anthropic import AnthropicBedrockMantle
+        try:
+            if self.settings.backend == "bedrock":
+                from anthropic import AnthropicBedrockMantle
 
-            return AnthropicBedrockMantle(aws_region=os.environ.get("AWS_REGION", "us-east-1"))
-        return anthropic.Anthropic()
+                return AnthropicBedrockMantle(aws_region=os.environ.get("AWS_REGION", "us-east-1"))
+            return anthropic.Anthropic()
+        except BackendError:
+            raise
+        except Exception as exc:
+            raise BackendError(
+                f"Could not create {self.settings.backend} backend. Re-run with --debug for details."
+            ) from exc
 
     @property
     def model_id(self) -> str:
@@ -59,8 +67,15 @@ def run_with_retries(
     for attempt in range(retries + 1):
         try:
             return operation()
+        except BackendError:
+            raise
         except Exception as exc:
             if attempt == retries or not is_transient(exc):
-                raise
+                attempts = attempt + 1
+                raise BackendError(
+                    f"backend operation failed after {attempts} "
+                    f"{'attempt' if attempts == 1 else 'attempts'}. "
+                    "Re-run with --debug for details."
+                ) from exc
             sleep(2**attempt)
     raise AssertionError("retry loop exited unexpectedly")

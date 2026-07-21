@@ -56,6 +56,11 @@ def test_loaded_context_supports_current_agent_and_mapping_tool_consumers(projec
         "returned": 1,
         "total": 1,
         "truncated": False,
+        "truncation": {
+            "rows": False,
+            "characters": False,
+            "character_limit": 50_000,
+        },
         "rows": [
             {
                 "source_table": "PERMITS",
@@ -102,14 +107,24 @@ def test_loaded_context_serializes_frozen_profile_through_current_tool(project_r
                 "notes": ["legacy values", "validated"],
                 "metrics": {"null_rate": 0.1},
             }
-        }
+        },
+        "truncation": {
+            "rows": False,
+            "characters": False,
+            "character_limit": 50_000,
+        },
     }
     assert json.loads(tools.call("get_profile_summary", {"entity": "permits"})) == {
         "permits": {
             "row_count": 10,
             "notes": ["legacy values", "validated"],
             "metrics": {"null_rate": 0.1},
-        }
+        },
+        "truncation": {
+            "rows": False,
+            "characters": False,
+            "character_limit": 50_000,
+        },
     }
 
 
@@ -221,4 +236,58 @@ def test_rejects_knowledge_directory_symlink_that_escapes_project(project_root: 
         pytest.skip(f"symlinks are unavailable: {exc}")
 
     with pytest.raises(ProjectValidationError, match="knowledge"):
+        FilesystemProjectRepository(project_root).load("alpha")
+
+
+def test_rejects_project_directory_symlink_alias(project_root: Path) -> None:
+    alias = project_root / "alpha-alias"
+    try:
+        alias.symlink_to(project_root / "alpha", target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks are unavailable: {exc}")
+
+    with pytest.raises(ProjectValidationError, match=r"alpha-alias.*symlink"):
+        FilesystemProjectRepository(project_root).load("alpha-alias")
+
+
+@pytest.mark.parametrize(
+    "artifact", ["project.yaml", "mapping_workbook.csv", "profile_summary.json"]
+)
+@pytest.mark.parametrize("target_scope", ["cross-project", "outside-root"])
+def test_rejects_project_artifact_symlinks(
+    project_root: Path, artifact: str, target_scope: str
+) -> None:
+    artifact_path = project_root / "alpha" / artifact
+    original = artifact_path.read_bytes()
+    if target_scope == "cross-project":
+        target_dir = project_root / "beta"
+    else:
+        target_dir = project_root.parent / "outside-projects"
+    target_dir.mkdir()
+    target = target_dir / artifact
+    target.write_bytes(original)
+    artifact_path.unlink()
+    try:
+        artifact_path.symlink_to(target)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"symlinks are unavailable: {exc}")
+
+    with pytest.raises(ProjectValidationError, match=artifact):
+        FilesystemProjectRepository(project_root).load("alpha")
+
+
+@pytest.mark.parametrize("invalid_entity", [[], ["not", "an", "object"], 7, "scalar", None])
+def test_rejects_non_object_profile_entities_with_entity_path(
+    project_root: Path, invalid_entity: object
+) -> None:
+    profile = project_root / "alpha" / "profile_summary.json"
+    profile.write_text(
+        json.dumps({"entities": {"permits": invalid_entity}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ProjectValidationError,
+        match=r"profile_summary\.json.*entities\.permits.*object",
+    ):
         FilesystemProjectRepository(project_root).load("alpha")

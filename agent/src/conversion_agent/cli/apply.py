@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Sequence
 
+from conversion_agent.core.errors import WorkbookError
 from conversion_agent.mapping import writeback
 from conversion_agent.mapping.apply import apply_typed
 from conversion_agent.mapping.validation import load_validated_workbook, validate_proposal_document
@@ -35,7 +36,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _run(args: argparse.Namespace) -> int:
     model = load_validated_workbook(args.input)
-    payload = json.loads(Path(args.proposals).read_text(encoding="utf-8"))
+    proposals_path = Path(args.proposals)
+    try:
+        payload = json.loads(proposals_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise WorkbookError(f"Invalid proposal JSON {proposals_path}: {exc}") from exc
+    except (OSError, UnicodeDecodeError) as exc:
+        raise WorkbookError(f"Could not read proposal JSON {proposals_path}: {exc}") from exc
     application = apply_typed(model, validate_proposal_document(payload))
     write_report = writeback.write(model, args.output, overwrite=args.overwrite)
     print(

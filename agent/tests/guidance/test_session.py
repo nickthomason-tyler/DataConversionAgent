@@ -4,6 +4,7 @@ import anthropic
 import httpx
 import pytest
 
+from conversion_agent.core.errors import BackendError
 from conversion_agent.core.settings import AppSettings
 from conversion_agent.guidance.session import GuidanceSession
 from conversion_agent.projects.filesystem import FilesystemProjectRepository
@@ -74,8 +75,10 @@ def test_failed_ask_restores_history_before_a_later_success(project_root) -> Non
     client = FakeToolRunnerClient([transient_failure(), final_answer("answered")])
     session = make_session(project_root, client, retries=0, max_history_messages=2)
 
-    with pytest.raises(anthropic.APIConnectionError):
+    with pytest.raises(BackendError) as raised:
         session.ask("will fail")
+
+    assert isinstance(raised.value.__cause__, anthropic.APIConnectionError)
 
     assert session.ask("will succeed") == "answered"
     assert session.history == [
@@ -83,3 +86,16 @@ def test_failed_ask_restores_history_before_a_later_success(project_root) -> Non
         {"role": "assistant", "content": "answered"},
     ]
     assert len(session.history) <= session.settings.max_history_messages
+
+
+def test_odd_history_capacity_keeps_the_most_recent_complete_pair(project_root) -> None:
+    client = FakeToolRunnerClient([final_answer("first"), final_answer("second")])
+    session = make_session(project_root, client, retries=0, max_history_messages=3)
+
+    session.ask("question one")
+    session.ask("question two")
+
+    assert session.history == [
+        {"role": "user", "content": "question two"},
+        {"role": "assistant", "content": "second"},
+    ]

@@ -10,6 +10,7 @@ from typing import Sequence
 import yaml
 
 from conversion_agent.config import CLIENTS_DIR
+from conversion_agent.core.errors import SettingsError
 from conversion_agent.core.settings import AppSettings
 from conversion_agent.guidance.backends import AnthropicBackendFactory
 from conversion_agent.mapping.service import MappingReport, MappingRequest, MappingService
@@ -79,14 +80,22 @@ def _run(args: argparse.Namespace) -> int:
 def _load_rules(path: str | None) -> dict:
     if path is None:
         return {}
-    rules = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    rules_path = Path(path)
+    try:
+        rules = yaml.safe_load(rules_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise SettingsError(f"Invalid mapping rules {rules_path}: {exc}") from exc
     if rules is None:
         return {}
     if not isinstance(rules, dict):
-        raise ValueError("Mapping rules must be a YAML object.")
+        raise SettingsError("Mapping rules must be a YAML object.")
     token_map = rules.get("token_map", {})
     if not isinstance(token_map, dict):
-        raise ValueError("Mapping rules token_map must be an object.")
+        raise SettingsError("Mapping rules token_map must be an object.")
+    if any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in token_map.items()
+    ):
+        raise SettingsError("Mapping rules token_map keys and values must be strings.")
     return rules
 
 

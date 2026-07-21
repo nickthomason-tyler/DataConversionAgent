@@ -88,11 +88,65 @@ def _cell_text(path: Path, ref: str) -> str:
     return root.xpath(f"string(.//m:c[@r='{ref}']/m:is/m:t)", namespaces={"m": writeback.NS_MAIN})
 
 
+def _replace_destination_with_stale_content(path: Path, kind: str) -> None:
+    def mutate(name: str, content: bytes) -> bytes:
+        if name != "xl/worksheets/sheet1.xml":
+            return content
+        root = etree.fromstring(content)
+        cells = root.xpath(".//m:c[@r='B3']", namespaces={"m": writeback.NS_MAIN})
+        if cells:
+            cell = cells[0]
+        else:
+            row = root.xpath(".//m:row[@r='3']", namespaces={"m": writeback.NS_MAIN})[0]
+            cell = etree.SubElement(row, f"{{{writeback.NS_MAIN}}}c", r="B3")
+        for child in list(cell):
+            cell.remove(child)
+        cell.attrib.pop("t", None)
+        if kind == "formula":
+            formula = etree.SubElement(cell, f"{{{writeback.NS_MAIN}}}f")
+            formula.text = 'IF(A3="", "", "human")'
+        else:
+            cell.set("t", "inlineStr")
+            inline = etree.SubElement(cell, f"{{{writeback.NS_MAIN}}}is")
+            text = etree.SubElement(inline, f"{{{writeback.NS_MAIN}}}t")
+            text.text = "   " if kind == "whitespace" else "human value"
+            text.set(f"{{{writeback.NS_XML}}}space", "preserve")
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8")
+
+    _rewrite_package(path, mutate)
+
+
 def test_write_refuses_input_as_output(tmp_path: Path) -> None:
     path, model = _crosswalk(tmp_path)
 
     with pytest.raises(OutputError, match="input workbook"):
         writeback.write(model, str(path))
+
+
+@pytest.mark.parametrize("stale_kind", ["value", "formula", "whitespace"])
+def test_write_fails_on_stale_occupied_destination_cells(tmp_path: Path, stale_kind: str) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    _replace_destination_with_stale_content(source, stale_kind)
+
+    with pytest.raises(OutputError, match=r"conflict.*Permits!B3"):
+        writeback.write(model, str(output))
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("stale_kind", ["value", "formula", "whitespace"])
+def test_overwrite_explicitly_replaces_stale_destination_cells(
+    tmp_path: Path, stale_kind: str
+) -> None:
+    source, model = _crosswalk(tmp_path)
+    output = tmp_path / "out.xlsx"
+    _replace_destination_with_stale_content(source, stale_kind)
+
+    report = writeback.write(model, str(output), overwrite=True)
+
+    assert _cell_text(output, "B3") == "Approved "
+    assert report.destination_cells == 1
 
 
 def test_failed_verification_keeps_existing_output(monkeypatch, tmp_path: Path) -> None:

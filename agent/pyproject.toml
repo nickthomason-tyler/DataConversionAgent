@@ -52,3 +52,4 @@ python_version = "3.11"
 packages = ["conversion_agent"]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
+check_untyped_defs = true

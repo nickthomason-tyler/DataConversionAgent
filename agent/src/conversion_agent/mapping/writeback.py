@@ -159,6 +159,15 @@ def _existing_cell_text(sheet_root, ref: str) -> str:
     return ""
 
 
+def _cell_is_occupied(sheet_root, ref: str) -> bool:
+    """Treat any stored destination value, formula, or whitespace as occupied."""
+    for cell in sheet_root.findall(f".//{{{NS_MAIN}}}c"):
+        if cell.get("r") != ref:
+            continue
+        return any(cell.find(f"{{{NS_MAIN}}}{tag}") is not None for tag in ("f", "v", "is"))
+    return False
+
+
 def _write_package(
     model: CrosswalkWorkbook, out_path: Path, *, overwrite: bool
 ) -> tuple[WriteReport, tuple[CellEdit, ...], bool]:
@@ -168,10 +177,9 @@ def _write_package(
     for sec in model.sections:
         for row_idx, prop in sec.proposals.items():
             kind = "llm" if prop.method == "llm" else "auto"
-            row = next(r for r in sec.rows if r.row_idx == row_idx)
-            for col, value, existing in zip(sec.dst_cols, prop.dest, row.existing):
-                if not value or (existing.strip() and not overwrite):
-                    continue  # skip empty dests; overwrite only on revision runs
+            for col, value in zip(sec.dst_cols, prop.dest):
+                if not value:
+                    continue  # no-good-match proposals have no destination edit
                 edits_by_sheet.setdefault(sec.tab, []).append((row_idx, col, value, kind, False))
             if sec.notes_col and prop.note:
                 pending_notes.setdefault(sec.tab, []).append(
@@ -192,9 +200,24 @@ def _write_package(
         destination_cells = 0
         note_cells = 0
         written_rows: set[tuple[str, int, str]] = set()
-        for tab in dict.fromkeys((*edits_by_sheet, *pending_notes)):
+        tabs = tuple(dict.fromkeys((*edits_by_sheet, *pending_notes)))
+        sheet_roots = {tab: etree.fromstring(source_zip.read(paths[tab])) for tab in tabs}
+        if not overwrite:
+            conflicts = [
+                f"{tab}!{_col_letter(col)}{row_idx}"
+                for tab, edits in edits_by_sheet.items()
+                for row_idx, col, _value, _kind, _is_note in edits
+                if _cell_is_occupied(sheet_roots[tab], f"{_col_letter(col)}{row_idx}")
+            ]
+            if conflicts:
+                raise OutputError(
+                    "Write conflict: current source workbook destination cells are occupied: "
+                    + ", ".join(conflicts)
+                )
+
+        for tab in tabs:
             path = paths[tab]
-            root = etree.fromstring(source_zip.read(path))
+            root = sheet_roots[tab]
             edits = list(edits_by_sheet.get(tab, ()))
             for note in pending_notes.get(tab, ()):
                 row_idx, col, _, _, _ = note

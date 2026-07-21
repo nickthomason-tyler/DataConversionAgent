@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 
 import pytest
 
@@ -52,3 +53,77 @@ def test_mapping_tool_is_bounded(bound_tool_set) -> None:
 
     assert result["returned"] == 1
     assert result["truncated"] is True
+
+
+def _build_tool_set(project_root: Path, settings: AppSettings):
+    project = FilesystemProjectRepository(project_root).load("alpha")
+    catalog = ResourceCatalog()
+    return build_tools(
+        project,
+        KnowledgeIndex.for_project(catalog.shared_knowledge(), project),
+        catalog.dictionary(),
+        settings,
+    )
+
+
+def test_mapping_tool_uses_configured_default_limit_when_omitted(project_root: Path) -> None:
+    mapping_file = project_root / "alpha" / "mapping_workbook.csv"
+    with mapping_file.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["PERMITS", "ADDRESS", "permit", "address", "copy", "draft", "analyst"])
+    tools = _build_tool_set(
+        project_root,
+        AppSettings(projects_root=project_root, mapping_default_limit=1),
+    )
+
+    result = json.loads(tools.call("get_mapping_status", {}))
+
+    assert result["returned"] == 1
+    assert result["truncation"]["rows"] is True
+    assert result["truncation"]["characters"] is False
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("get_mapping_status", {}),
+        ("lookup_dct_field", {"table": "permit"}),
+        ("get_profile_summary", {}),
+    ],
+)
+def test_json_tools_remain_valid_and_report_character_truncation_at_tight_limits(
+    project_root: Path, tool_name: str, arguments: dict
+) -> None:
+    profile = project_root / "alpha" / "profile_summary.json"
+    profile.write_text(
+        json.dumps({"entities": {"permits": {"notes": "x" * 2_000}}}),
+        encoding="utf-8",
+    )
+    settings = AppSettings(
+        projects_root=project_root,
+        max_tool_chars=220,
+        mapping_default_limit=1,
+    )
+    tools = _build_tool_set(project_root, settings)
+
+    raw = tools.call(tool_name, arguments)
+    result = json.loads(raw)
+
+    assert len(raw) <= settings.max_tool_chars
+    assert result["truncation"]["characters"] is True
+    assert result["truncation"]["character_limit"] == settings.max_tool_chars
+
+
+def test_knowledge_truncation_keeps_a_complete_citation_and_unambiguous_marker(
+    project_root: Path,
+) -> None:
+    settings = AppSettings(projects_root=project_root, max_tool_chars=220)
+    tools = _build_tool_set(project_root, settings)
+
+    result = tools.call("search_knowledge_base", {"query": "conversion data project"})
+
+    first_line = result.splitlines()[0]
+    assert first_line.startswith("[source: ")
+    assert first_line.endswith("]")
+    assert result.endswith("[TRUNCATED: tool output exceeded 220 characters]")
+    assert len(result) <= settings.max_tool_chars

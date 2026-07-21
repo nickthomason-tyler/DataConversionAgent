@@ -82,7 +82,7 @@ It is searched only in that project session. Governed shared content cites as
 `[source: <path> § <heading>]`; an overlay result is deliberately distinct:
 `[project source: <project-id>/<path> § <heading>]` (that is,
 `[project source: ...]`). Treat the latter as local project guidance, not a
-shared standard.
+shared standard. Equal-scoring shared results are returned before project-overlay results.
 
 ## Packaged shared resources
 
